@@ -37,8 +37,8 @@ from scipy.special import erfc
 # User settings
 # -----------------------------------------------------------------------------
 # These folder names are the only things you usually need to adjust.
-TURBO_REPOSITORY_FOLDER = Path("turbo")
-LDPC_REPOSITORY_FOLDER = Path("ldpc")
+TURBO_REPOSITORY_FOLDER = Path("turbo-vs-ldpc-analysis/turbo")
+LDPC_REPOSITORY_FOLDER = Path("turbo-vs-ldpc-analysis/ldpc")
 
 # The output folder is created automatically and stores only the comparison plots.
 OUTPUT_FOLDER = Path("comparison_results")
