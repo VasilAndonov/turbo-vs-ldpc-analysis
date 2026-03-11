@@ -1,25 +1,41 @@
-import numpy as np
-import time
-from simulation import run_conv, run_turbo
-from plotting import plot_all
+"""Main entry point for the turbo-code BER simulation.
 
-SEED = 12
+Run this file to generate the convolutional baseline, the turbo BER curves, and the LLR
+confidence plot.
+"""
+
+import time
+
+import numpy as np
+
+from config import RANDOM_SEED
+from simulation import (
+    plot_simulation_results,
+    run_convolutional_simulation,
+    run_turbo_simulation,
+)
+
+
+# --------------------------------------------------------------------------------------
+# Main experiment flow
+# --------------------------------------------------------------------------------------
+# The same random generator is shared across the whole run so the experiment remains
+# reproducible.
 
 def main():
-    rng = np.random.default_rng(SEED)
-    t0 = time.time()
-    print("Running Turbo code simulation...")
+    random_number_generator = np.random.default_rng(RANDOM_SEED)
+    start_time = time.time()
 
-    # Run conventional convolutional code simulation
-    conv_ber = run_conv(rng)
+    convolutional_bit_error_rate = run_convolutional_simulation(random_number_generator)
+    turbo_bit_error_rate_by_iteration, llr_snapshot_by_iteration = run_turbo_simulation(random_number_generator)
+    plot_simulation_results(
+        convolutional_bit_error_rate,
+        turbo_bit_error_rate_by_iteration,
+        llr_snapshot_by_iteration,
+    )
 
-    # Run turbo code simulation
-    turbo_results, llr_snapshot = run_turbo(rng)
+    print(f"Simulation finished in {time.time() - start_time:.2f} seconds")
 
-    # Plot results
-    plot_all(conv_ber, turbo_results, llr_snapshot)
-
-    print(f"Simulation done in {time.time() - t0:.2f} seconds")
 
 if __name__ == "__main__":
     main()
