@@ -1,107 +1,85 @@
 import numpy as np
 
-# -----------------------------
-# Encoder configuration
-# -----------------------------
-MEMORY_LENGTH = 2          # Memory length of the RSC encoder
-TAIL_LENGTH = 2            # Number of tail bits to terminate encoder
-NUMBER_OF_STATES = 4       # 2^memory_length
+MEMORY = 2
+TAIL = 2
+NSTATES = 4
 
-# -----------------------------
-# Build RSC trellis tables
-# -----------------------------
-def build_rsc_trellis():
-    """
-    Builds the trellis tables for a 4-state RSC encoder with feedback polynomial 5 (octal) and feedforward 7 (octal).
-    Returns:
-        next_state_table : Next state for each current state and input bit
-        parity_table     : Parity bit for each current state and input bit
-        systematic_sign  : Sign mapping for systematic bits (for LLR calculations)
-        parity_sign      : Sign mapping for parity bits (for LLR calculations)
-        previous_states  : List of previous states and input bits leading to a given state
-        next_states      : List of next states and input bits from a given state
-    """
-    next_state_table = np.zeros((NUMBER_OF_STATES, 2), dtype=int)
-    parity_table = np.zeros((NUMBER_OF_STATES, 2), dtype=int)
-    systematic_sign = np.zeros((NUMBER_OF_STATES, 2), dtype=float)
-    parity_sign = np.zeros((NUMBER_OF_STATES, 2), dtype=float)
-    previous_states = [[] for _ in range(NUMBER_OF_STATES)]
-    next_states = [[] for _ in range(NUMBER_OF_STATES)]
+def build_rsc_tables():
+    next_state = np.zeros((NSTATES, 2), dtype=int)
+    parity = np.zeros((NSTATES, 2), dtype=int)
+    input_sign = np.zeros((NSTATES, 2), dtype=float)
+    parity_sign = np.zeros((NSTATES, 2), dtype=float)
+    prev_states = [[] for _ in range(NSTATES)]
+    next_states = [[] for _ in range(NSTATES)]
 
-    for state in range(NUMBER_OF_STATES):
-        state_bit0 = (state >> 1) & 1
-        state_bit1 = state & 1
-        for input_bit in (0, 1):
-            # Recursive bit: feedback polynomial 101 (octal)
-            recursive_bit = input_bit ^ state_bit1
-            # Parity bit: feedforward polynomial 111 (octal)
-            parity_bit = recursive_bit ^ state_bit0 ^ state_bit1
-            next_state_bit0 = recursive_bit
-            next_state_bit1 = state_bit0
-            next_state = (next_state_bit0 << 1) | next_state_bit1
+    for state in range(NSTATES):
+        s0 = (state >> 1) & 1
+        s1 = state & 1
+        for u in (0, 1):
+            r = u ^ s1  # feedback 101
+            p = r ^ s0 ^ s1  # feedforward 111
+            ns0 = r
+            ns1 = s0
+            ns = (ns0 << 1) | ns1
+            next_state[state, u] = ns
+            parity[state, u] = p
+            input_sign[state, u] = 1.0 if u == 0 else -1.0
+            parity_sign[state, u] = 1.0 if p == 0 else -1.0
+            prev_states[ns].append((state, u))
+            next_states[state].append((ns, u))
+    return next_state, parity, input_sign, parity_sign, prev_states, next_states
 
-            next_state_table[state, input_bit] = next_state
-            parity_table[state, input_bit] = parity_bit
-            systematic_sign[state, input_bit] = 1.0 if input_bit == 0 else -1.0
-            parity_sign[state, input_bit] = 1.0 if parity_bit == 0 else -1.0
-            previous_states[next_state].append((state, input_bit))
-            next_states[state].append((next_state, input_bit))
-
-    return next_state_table, parity_table, systematic_sign, parity_sign, previous_states, next_states
+NEXT_STATE, PARITY, INPUT_SIGN, PARITY_SIGN, PREV_STATES, NEXT_STATES = build_rsc_tables()
 
 
-# Build global trellis tables
-NEXT_STATE_TABLE, PARITY_TABLE, SYSTEMATIC_SIGN_TABLE, PARITY_SIGN_TABLE, PREVIOUS_STATES, NEXT_STATES = build_rsc_trellis()
-
-# -----------------------------
-# Encoder functions
-# -----------------------------
-def rsc_tail_bits(current_state):
-    """
-    Generate tail bits to force the encoder back to the zero state.
-    """
-    tail_bits = []
-    state = current_state
-    for _ in range(TAIL_LENGTH):
-        input_bit = state & 1
-        tail_bits.append(input_bit)
-        state = NEXT_STATE_TABLE[state, input_bit]
-    return tail_bits
+def rsc_tail_bits(state):
+    tail = []
+    st = state
+    for _ in range(TAIL):
+        s1 = st & 1
+        u = s1
+        tail.append(u)
+        st = NEXT_STATE[st, u]
+    return tail
 
 
-def rsc_encode_terminated(information_bits):
-    """
-    Encode information bits using a terminated RSC encoder.
-    """
-    information_bits = np.asarray(information_bits, dtype=np.int8)
-    systematic_bits = []
-    parity_bits = []
-    current_state = 0
+def rsc_encode_terminated(info_bits):
+    info_bits = np.asarray(info_bits, dtype=np.int8)
+    sys = []
+    par = []
+    state = 0
+    for b in info_bits:
+        sys.append(int(b))
+        par.append(PARITY[state, b])
+        state = NEXT_STATE[state, b]
 
-    # Encode information bits
-    for bit in information_bits:
-        systematic_bits.append(int(bit))
-        parity_bits.append(PARITY_TABLE[current_state, bit])
-        current_state = NEXT_STATE_TABLE[current_state, bit]
+    tails = rsc_tail_bits(state)
+    for b in tails:
+        sys.append(int(b))
+        par.append(PARITY[state, b])
+        state = NEXT_STATE[state, b]
 
-    # Add tail bits
-    tail_bits = rsc_tail_bits(current_state)
-    for bit in tail_bits:
-        systematic_bits.append(int(bit))
-        parity_bits.append(PARITY_TABLE[current_state, bit])
-        current_state = NEXT_STATE_TABLE[current_state, bit]
-
-    return np.array(systematic_bits, dtype=np.int8), np.array(parity_bits, dtype=np.int8)
+    return np.array(sys, dtype=np.int8), np.array(par, dtype=np.int8)
 
 
-def turbo_encode(information_bits, interleaver):
-    """
-    Turbo encode using two parallel RSC encoders and an interleaver.
-    Returns:
-        systematic_1, parity_1, systematic_2, parity_2
-    """
-    information_bits = np.asarray(information_bits, dtype=np.int8)
-    systematic_bits_1, parity_bits_1 = rsc_encode_terminated(information_bits)
-    interleaved_bits = information_bits[interleaver]
-    systematic_bits_2, parity_bits_2 = rsc_encode_terminated(interleaved_bits)
-    return systematic_bits_1, parity_bits_1, systematic_bits_2, parity_bits_2
+def turbo_encode(info_bits, interleaver):
+    info_bits = np.asarray(info_bits, dtype=np.int8)
+    sys1, par1 = rsc_encode_terminated(info_bits)
+    interleaved = info_bits[interleaver]
+    sys2, par2 = rsc_encode_terminated(interleaved)
+    return sys1, par1, sys2, par2
+
+
+def conv_encode_75(bits):
+    bits = np.asarray(bits, dtype=np.int8)
+    bits = np.concatenate([bits, np.zeros(MEMORY, dtype=np.int8)])
+    s0 = 0
+    s1 = 0
+    out = []
+    for u in bits:
+        c0 = u ^ s0 ^ s1  # 111
+        c1 = u ^ s1       # 101
+        out.extend((c0, c1))
+        s1 = s0
+        s0 = int(u)
+    return np.array(out, dtype=np.int8)
