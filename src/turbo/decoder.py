@@ -1,137 +1,239 @@
+"""Decoder-side functions for the turbo-code simulation.
+
+This file contains:
+1. A soft-decision Viterbi decoder for the rate-1/2 convolutional baseline.
+2. A terminated max-log-MAP constituent decoder.
+3. An iterative turbo decoder that exchanges extrinsic information between two constituent
+   decoders.
+"""
+
 import numpy as np
-from encoder import NEXT_STATE, PARITY, INPUT_SIGN, PARITY_SIGN, PREV_STATES, NEXT_STATES, TAIL, NSTATES, MEMORY, K
 
-def viterbi_decode_75(rx, n_info):
-    rx = np.asarray(rx, dtype=float)
-    nsteps = len(rx) // 2
-    pm = np.full((nsteps + 1, NSTATES), 1e30)
-    prev_state = np.full((nsteps + 1, NSTATES), -1, dtype=int)
-    prev_input = np.full((nsteps + 1, NSTATES), -1, dtype=int)
-    pm[0, 0] = 0.0
+from config import (
+    ENCODER_MEMORY,
+    EXTRINSIC_SCALING_FACTOR,
+    INFORMATION_BLOCK_LENGTH,
+    NUMBER_OF_STATES,
+)
+from encoder import (
+    INFORMATION_BIT_SIGN_TABLE,
+    NEXT_STATE_TABLE,
+    PARITY_BIT_SIGN_TABLE,
+    PREDECESSOR_STATE_TABLE,
+    SUCCESSOR_STATE_TABLE,
+)
 
-    for k in range(nsteps):
-        r0, r1 = rx[2*k], rx[2*k+1]
-        for state in range(NSTATES):
-            metric = pm[k, state]
-            if metric > 1e20:
+
+# --------------------------------------------------------------------------------------
+# Soft-decision Viterbi decoder for the (7,5) convolutional code
+# --------------------------------------------------------------------------------------
+# The decoder works with noisy BPSK symbols. Each branch metric is the Euclidean distance
+# between the received pair and the expected coded-symbol pair.
+
+def decode_convolutional_75_viterbi(received_symbols, number_of_information_bits):
+    received_symbols = np.asarray(received_symbols, dtype=float)
+    number_of_trellis_steps = len(received_symbols) // 2
+
+    path_metric_table = np.full((number_of_trellis_steps + 1, NUMBER_OF_STATES), 1e30)
+    predecessor_state_choice = np.full((number_of_trellis_steps + 1, NUMBER_OF_STATES), -1, dtype=int)
+    predecessor_input_choice = np.full((number_of_trellis_steps + 1, NUMBER_OF_STATES), -1, dtype=int)
+    path_metric_table[0, 0] = 0.0
+
+    for step_index in range(number_of_trellis_steps):
+        received_symbol_one = received_symbols[2 * step_index]
+        received_symbol_two = received_symbols[2 * step_index + 1]
+
+        for state_index in range(NUMBER_OF_STATES):
+            current_metric = path_metric_table[step_index, state_index]
+            if current_metric > 1e20:
                 continue
-            s0 = (state >> 1) & 1
-            s1 = state & 1
-            for u in (0, 1):
-                c0 = u ^ s0 ^ s1
-                c1 = u ^ s1
-                ns = (u << 1) | s0
-                e0 = 1.0 if c0 == 0 else -1.0
-                e1 = 1.0 if c1 == 0 else -1.0
-                branch = (r0 - e0)**2 + (r1 - e1)**2
-                cand = metric + branch
-                if cand < pm[k+1, ns]:
-                    pm[k+1, ns] = cand
-                    prev_state[k+1, ns] = state
-                    prev_input[k+1, ns] = u
 
-    state = 0
-    decoded = []
-    for k in range(nsteps, 0, -1):
-        decoded.append(prev_input[k, state])
-        state = prev_state[k, state]
-    decoded.reverse()
-    return np.array(decoded[:n_info], dtype=np.int8)
+            oldest_memory_bit = (state_index >> 1) & 1
+            newest_memory_bit = state_index & 1
 
+            for input_bit in (0, 1):
+                first_coded_bit = input_bit ^ oldest_memory_bit ^ newest_memory_bit
+                second_coded_bit = input_bit ^ newest_memory_bit
+                next_state_index = (input_bit << 1) | oldest_memory_bit
 
-def bcjr_maxlog_terminated(llr_sys, llr_par, llr_apriori):
-    llr_sys = np.asarray(llr_sys, dtype=float)
-    llr_par = np.asarray(llr_par, dtype=float)
-    llr_apriori = np.asarray(llr_apriori, dtype=float)
-    n = len(llr_sys)
-    neg_inf = -1e15
+                expected_symbol_one = 1.0 if first_coded_bit == 0 else -1.0
+                expected_symbol_two = 1.0 if second_coded_bit == 0 else -1.0
 
-    alpha = np.full((n + 1, NSTATES), neg_inf, dtype=float)
-    beta = np.full((n + 1, NSTATES), neg_inf, dtype=float)
-    alpha[0, 0] = 0.0
-    beta[n, 0] = 0.0
+                branch_metric = (
+                    (received_symbol_one - expected_symbol_one) ** 2
+                    + (received_symbol_two - expected_symbol_two) ** 2
+                )
+                candidate_metric = current_metric + branch_metric
 
-    gamma0 = np.zeros((n, NSTATES), dtype=float)
-    gamma1 = np.zeros((n, NSTATES), dtype=float)
-    for k in range(n):
-        for s in range(NSTATES):
-            gamma0[k, s] = 0.5 * ((llr_sys[k] + llr_apriori[k]) * INPUT_SIGN[s, 0] + llr_par[k] * PARITY_SIGN[s, 0])
-            gamma1[k, s] = 0.5 * ((llr_sys[k] + llr_apriori[k]) * INPUT_SIGN[s, 1] + llr_par[k] * PARITY_SIGN[s, 1])
+                if candidate_metric < path_metric_table[step_index + 1, next_state_index]:
+                    path_metric_table[step_index + 1, next_state_index] = candidate_metric
+                    predecessor_state_choice[step_index + 1, next_state_index] = state_index
+                    predecessor_input_choice[step_index + 1, next_state_index] = input_bit
 
-    for k in range(n):
-        for ns in range(NSTATES):
-            best = neg_inf
-            for s, u in PREV_STATES[ns]:
-                g = gamma0[k, s] if u == 0 else gamma1[k, s]
-                cand = alpha[k, s] + g
-                if cand > best:
-                    best = cand
-            alpha[k + 1, ns] = best
+    final_state_index = 0
+    decoded_bit_list = []
+    for step_index in range(number_of_trellis_steps, 0, -1):
+        decoded_bit_list.append(predecessor_input_choice[step_index, final_state_index])
+        final_state_index = predecessor_state_choice[step_index, final_state_index]
 
-    for k in range(n - 1, -1, -1):
-        for s in range(NSTATES):
-            best = neg_inf
-            for ns, u in NEXT_STATES[s]:
-                g = gamma0[k, s] if u == 0 else gamma1[k, s]
-                cand = beta[k + 1, ns] + g
-                if cand > best:
-                    best = cand
-            beta[k, s] = best
-
-    llr_post = np.zeros(n, dtype=float)
-    for k in range(n):
-        best0 = neg_inf
-        best1 = neg_inf
-        for s in range(NSTATES):
-            ns0 = NEXT_STATE[s, 0]
-            ns1 = NEXT_STATE[s, 1]
-            v0 = alpha[k, s] + gamma0[k, s] + beta[k + 1, ns0]
-            v1 = alpha[k, s] + gamma1[k, s] + beta[k + 1, ns1]
-            if v0 > best0:
-                best0 = v0
-            if v1 > best1:
-                best1 = v1
-        llr_post[k] = best0 - best1
-
-    llr_ext = llr_post - llr_sys - llr_apriori
-    return llr_post, llr_ext
+    decoded_bit_list.reverse()
+    return np.array(decoded_bit_list[:number_of_information_bits], dtype=np.int8)
 
 
-def turbo_decode(sys1_rx, par1_rx, par2_rx, interleaver, sigma2, n_iterations):
-    n_total = len(sys1_rx)
-    deinterleaver = np.argsort(interleaver)
-    Lc = 2.0 / sigma2
+# --------------------------------------------------------------------------------------
+# Terminated max-log-MAP constituent decoder
+# --------------------------------------------------------------------------------------
+# This is the soft-input soft-output block used inside turbo decoding. It computes the
+# a-posteriori information and then removes the systematic and a-priori parts to obtain the
+# extrinsic information passed to the other decoder.
 
-    llr_sys1 = Lc * sys1_rx
-    llr_par1 = Lc * par1_rx
-    llr_par2 = Lc * par2_rx
+def decode_constituent_max_log_map_terminated(
+    systematic_llr_values,
+    parity_llr_values,
+    apriori_llr_values,
+):
+    systematic_llr_values = np.asarray(systematic_llr_values, dtype=float)
+    parity_llr_values = np.asarray(parity_llr_values, dtype=float)
+    apriori_llr_values = np.asarray(apriori_llr_values, dtype=float)
 
-    apriori1 = np.zeros(n_total, dtype=float)
-    llr_iters = []
-    ext_scale = 0.75
+    number_of_time_steps = len(systematic_llr_values)
+    negative_infinity = -1e15
 
-    perm_full = np.concatenate([interleaver, np.arange(K, n_total)])
-    inv_full = np.argsort(perm_full)
+    forward_metric_table = np.full((number_of_time_steps + 1, NUMBER_OF_STATES), negative_infinity, dtype=float)
+    backward_metric_table = np.full((number_of_time_steps + 1, NUMBER_OF_STATES), negative_infinity, dtype=float)
+    forward_metric_table[0, 0] = 0.0
+    backward_metric_table[number_of_time_steps, 0] = 0.0
 
-    for _ in range(n_iterations):
-        _, ext1 = bcjr_maxlog_terminated(llr_sys1, llr_par1, apriori1)
-        apriori2 = np.zeros(n_total, dtype=float)
-        apriori2[:K] = ext_scale * ext1[interleaver]
+    zero_branch_metric_table = np.zeros((number_of_time_steps, NUMBER_OF_STATES), dtype=float)
+    one_branch_metric_table = np.zeros((number_of_time_steps, NUMBER_OF_STATES), dtype=float)
 
-        sys2_int = np.zeros(n_total, dtype=float)
-        sys2_int[:K] = llr_sys1[interleaver]
-        post2_int, ext2_int = bcjr_maxlog_terminated(sys2_int, llr_par2, apriori2)
+    for time_index in range(number_of_time_steps):
+        for state_index in range(NUMBER_OF_STATES):
+            zero_branch_metric_table[time_index, state_index] = 0.5 * (
+                (systematic_llr_values[time_index] + apriori_llr_values[time_index])
+                * INFORMATION_BIT_SIGN_TABLE[state_index, 0]
+                + parity_llr_values[time_index] * PARITY_BIT_SIGN_TABLE[state_index, 0]
+            )
+            one_branch_metric_table[time_index, state_index] = 0.5 * (
+                (systematic_llr_values[time_index] + apriori_llr_values[time_index])
+                * INFORMATION_BIT_SIGN_TABLE[state_index, 1]
+                + parity_llr_values[time_index] * PARITY_BIT_SIGN_TABLE[state_index, 1]
+            )
 
-        post_info = np.zeros(K, dtype=float)
-        post_info[interleaver] = post2_int[:K]
+    for time_index in range(number_of_time_steps):
+        for next_state_index in range(NUMBER_OF_STATES):
+            best_metric = negative_infinity
+            for predecessor_state_index, input_bit in PREDECESSOR_STATE_TABLE[next_state_index]:
+                branch_metric = (
+                    zero_branch_metric_table[time_index, predecessor_state_index]
+                    if input_bit == 0
+                    else one_branch_metric_table[time_index, predecessor_state_index]
+                )
+                candidate_metric = forward_metric_table[time_index, predecessor_state_index] + branch_metric
+                if candidate_metric > best_metric:
+                    best_metric = candidate_metric
+            forward_metric_table[time_index + 1, next_state_index] = best_metric
 
-        ext_info = np.zeros(K, dtype=float)
-        ext_info[interleaver] = ext2_int[:K]
+    for time_index in range(number_of_time_steps - 1, -1, -1):
+        for state_index in range(NUMBER_OF_STATES):
+            best_metric = negative_infinity
+            for next_state_index, input_bit in SUCCESSOR_STATE_TABLE[state_index]:
+                branch_metric = (
+                    zero_branch_metric_table[time_index, state_index]
+                    if input_bit == 0
+                    else one_branch_metric_table[time_index, state_index]
+                )
+                candidate_metric = backward_metric_table[time_index + 1, next_state_index] + branch_metric
+                if candidate_metric > best_metric:
+                    best_metric = candidate_metric
+            backward_metric_table[time_index, state_index] = best_metric
 
-        llr_total = post_info.copy()
-        llr_iters.append(llr_total)
+    posterior_llr_values = np.zeros(number_of_time_steps, dtype=float)
+    for time_index in range(number_of_time_steps):
+        best_zero_metric = negative_infinity
+        best_one_metric = negative_infinity
 
-        apriori1[:K] = ext_scale * ext_info
+        for state_index in range(NUMBER_OF_STATES):
+            next_state_for_zero = NEXT_STATE_TABLE[state_index, 0]
+            next_state_for_one = NEXT_STATE_TABLE[state_index, 1]
 
-    hard = (llr_iters[-1] < 0.0).astype(np.int8)
-    return hard, llr_iters
+            zero_path_metric = (
+                forward_metric_table[time_index, state_index]
+                + zero_branch_metric_table[time_index, state_index]
+                + backward_metric_table[time_index + 1, next_state_for_zero]
+            )
+            one_path_metric = (
+                forward_metric_table[time_index, state_index]
+                + one_branch_metric_table[time_index, state_index]
+                + backward_metric_table[time_index + 1, next_state_for_one]
+            )
+
+            if zero_path_metric > best_zero_metric:
+                best_zero_metric = zero_path_metric
+            if one_path_metric > best_one_metric:
+                best_one_metric = one_path_metric
+
+        posterior_llr_values[time_index] = best_zero_metric - best_one_metric
+
+    extrinsic_llr_values = posterior_llr_values - systematic_llr_values - apriori_llr_values
+    return posterior_llr_values, extrinsic_llr_values
+
+
+# --------------------------------------------------------------------------------------
+# Iterative turbo decoder
+# --------------------------------------------------------------------------------------
+# Decoder one works in the original bit order. Decoder two works in the interleaved order.
+# After each half-iteration, only extrinsic information is exchanged.
+
+def turbo_decode(
+    received_systematic_stream_one,
+    received_parity_stream_one,
+    received_parity_stream_two,
+    interleaver_pattern,
+    noise_variance,
+    number_of_iterations,
+):
+    total_stream_length = len(received_systematic_stream_one)
+    llr_scale = 2.0 / noise_variance
+
+    systematic_llr_stream_one = llr_scale * received_systematic_stream_one
+    parity_llr_stream_one = llr_scale * received_parity_stream_one
+    parity_llr_stream_two = llr_scale * received_parity_stream_two
+
+    apriori_llr_stream_one = np.zeros(total_stream_length, dtype=float)
+    iteration_llr_history = []
+
+    for _ in range(number_of_iterations):
+        _, extrinsic_llr_stream_one = decode_constituent_max_log_map_terminated(
+            systematic_llr_stream_one,
+            parity_llr_stream_one,
+            apriori_llr_stream_one,
+        )
+
+        apriori_llr_stream_two = np.zeros(total_stream_length, dtype=float)
+        apriori_llr_stream_two[:INFORMATION_BLOCK_LENGTH] = (
+            EXTRINSIC_SCALING_FACTOR * extrinsic_llr_stream_one[interleaver_pattern]
+        )
+
+        interleaved_systematic_llr_stream = np.zeros(total_stream_length, dtype=float)
+        interleaved_systematic_llr_stream[:INFORMATION_BLOCK_LENGTH] = systematic_llr_stream_one[interleaver_pattern]
+
+        posterior_llr_stream_two_interleaved, extrinsic_llr_stream_two_interleaved = (
+            decode_constituent_max_log_map_terminated(
+                interleaved_systematic_llr_stream,
+                parity_llr_stream_two,
+                apriori_llr_stream_two,
+            )
+        )
+
+        posterior_information_llr = np.zeros(INFORMATION_BLOCK_LENGTH, dtype=float)
+        posterior_information_llr[interleaver_pattern] = posterior_llr_stream_two_interleaved[:INFORMATION_BLOCK_LENGTH]
+
+        extrinsic_information_llr = np.zeros(INFORMATION_BLOCK_LENGTH, dtype=float)
+        extrinsic_information_llr[interleaver_pattern] = extrinsic_llr_stream_two_interleaved[:INFORMATION_BLOCK_LENGTH]
+
+        iteration_llr_history.append(posterior_information_llr.copy())
+        apriori_llr_stream_one[:INFORMATION_BLOCK_LENGTH] = EXTRINSIC_SCALING_FACTOR * extrinsic_information_llr
+
+    final_hard_decision_bits = (iteration_llr_history[-1] < 0.0).astype(np.int8)
+    return final_hard_decision_bits, iteration_llr_history
