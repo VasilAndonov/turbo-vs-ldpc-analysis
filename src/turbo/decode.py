@@ -1,130 +1,137 @@
 import numpy as np
-from encoder import NEXT_STATE_TABLE, PARITY_TABLE, SYSTEMATIC_SIGN_TABLE, PARITY_SIGN_TABLE, PREVIOUS_STATES, NEXT_STATES, TAIL_LENGTH, MEMORY_LENGTH
+from encoder import NEXT_STATE, PARITY, INPUT_SIGN, PARITY_SIGN, PREV_STATES, NEXT_STATES, TAIL, NSTATES, MEMORY, K
 
-# -----------------------------
-# Max-Log-MAP RSC decoder (terminated)
-# -----------------------------
-def rsc_max_log_map_terminated(systematic_llr, parity_llr, apriori_llr):
-    """
-    Max-log-MAP decoding of a terminated RSC encoder.
-    Args:
-        systematic_llr : Log-likelihood ratios of received systematic bits
-        parity_llr     : Log-likelihood ratios of received parity bits
-        apriori_llr    : Log-likelihood ratios from other decoder (extrinsic)
-    Returns:
-        posterior_llr : Posterior LLR for information bits
-        extrinsic_llr : Extrinsic LLR (for iterative turbo decoding)
-    """
-    number_of_bits = len(systematic_llr)
-    negative_infinity = -1e15
+def viterbi_decode_75(rx, n_info):
+    rx = np.asarray(rx, dtype=float)
+    nsteps = len(rx) // 2
+    pm = np.full((nsteps + 1, NSTATES), 1e30)
+    prev_state = np.full((nsteps + 1, NSTATES), -1, dtype=int)
+    prev_input = np.full((nsteps + 1, NSTATES), -1, dtype=int)
+    pm[0, 0] = 0.0
 
-    # Initialize forward and backward metrics
-    forward_metric = np.full((number_of_bits + 1, 4), negative_infinity, dtype=float)
-    backward_metric = np.full((number_of_bits + 1, 4), negative_infinity, dtype=float)
-    forward_metric[0, 0] = 0.0
-    backward_metric[number_of_bits, 0] = 0.0
+    for k in range(nsteps):
+        r0, r1 = rx[2*k], rx[2*k+1]
+        for state in range(NSTATES):
+            metric = pm[k, state]
+            if metric > 1e20:
+                continue
+            s0 = (state >> 1) & 1
+            s1 = state & 1
+            for u in (0, 1):
+                c0 = u ^ s0 ^ s1
+                c1 = u ^ s1
+                ns = (u << 1) | s0
+                e0 = 1.0 if c0 == 0 else -1.0
+                e1 = 1.0 if c1 == 0 else -1.0
+                branch = (r0 - e0)**2 + (r1 - e1)**2
+                cand = metric + branch
+                if cand < pm[k+1, ns]:
+                    pm[k+1, ns] = cand
+                    prev_state[k+1, ns] = state
+                    prev_input[k+1, ns] = u
 
-    # Branch metrics
-    gamma0 = np.zeros((number_of_bits, 4), dtype=float)
-    gamma1 = np.zeros((number_of_bits, 4), dtype=float)
-    for bit_index in range(number_of_bits):
-        for state in range(4):
-            gamma0[bit_index, state] = 0.5 * ((systematic_llr[bit_index] + apriori_llr[bit_index]) * SYSTEMATIC_SIGN_TABLE[state, 0] +
-                                              parity_llr[bit_index] * PARITY_SIGN_TABLE[state, 0])
-            gamma1[bit_index, state] = 0.5 * ((systematic_llr[bit_index] + apriori_llr[bit_index]) * SYSTEMATIC_SIGN_TABLE[state, 1] +
-                                              parity_llr[bit_index] * PARITY_SIGN_TABLE[state, 1])
-
-    # Forward recursion
-    for bit_index in range(number_of_bits):
-        for next_state in range(4):
-            best_metric = negative_infinity
-            for previous_state, input_bit in PREVIOUS_STATES[next_state]:
-                branch_metric = gamma0[bit_index, previous_state] if input_bit == 0 else gamma1[bit_index, previous_state]
-                candidate_metric = forward_metric[bit_index, previous_state] + branch_metric
-                if candidate_metric > best_metric:
-                    best_metric = candidate_metric
-            forward_metric[bit_index + 1, next_state] = best_metric
-
-    # Backward recursion
-    for bit_index in range(number_of_bits - 1, -1, -1):
-        for state in range(4):
-            best_metric = negative_infinity
-            for next_state, input_bit in NEXT_STATES[state]:
-                branch_metric = gamma0[bit_index, state] if input_bit == 0 else gamma1[bit_index, state]
-                candidate_metric = backward_metric[bit_index + 1, next_state] + branch_metric
-                if candidate_metric > best_metric:
-                    best_metric = candidate_metric
-            backward_metric[bit_index, state] = best_metric
-
-    # Compute posterior LLR
-    posterior_llr = np.zeros(number_of_bits, dtype=float)
-    for bit_index in range(number_of_bits):
-        best_zero = negative_infinity
-        best_one = negative_infinity
-        for state in range(4):
-            next_state_zero = NEXT_STATE_TABLE[state, 0]
-            next_state_one = NEXT_STATE_TABLE[state, 1]
-            value_zero = forward_metric[bit_index, state] + gamma0[bit_index, state] + backward_metric[bit_index + 1, next_state_zero]
-            value_one = forward_metric[bit_index, state] + gamma1[bit_index, state] + backward_metric[bit_index + 1, next_state_one]
-            if value_zero > best_zero:
-                best_zero = value_zero
-            if value_one > best_one:
-                best_one = value_one
-        posterior_llr[bit_index] = best_zero - best_one
-
-    # Compute extrinsic LLR
-    extrinsic_llr = posterior_llr - systematic_llr - apriori_llr
-    return posterior_llr, extrinsic_llr
+    state = 0
+    decoded = []
+    for k in range(nsteps, 0, -1):
+        decoded.append(prev_input[k, state])
+        state = prev_state[k, state]
+    decoded.reverse()
+    return np.array(decoded[:n_info], dtype=np.int8)
 
 
-def turbo_decode(systematic_1, parity_1, parity_2, interleaver, noise_variance, number_of_iterations):
-    """
-    Turbo decoding using two RSC decoders and iterative exchange.
-    Args:
-        systematic_1 : Received systematic bits (first encoder)
-        parity_1     : Received parity bits from first encoder
-        parity_2     : Received parity bits from second encoder
-        interleaver  : Interleaver used in encoder
-        noise_variance : Noise variance (sigma^2)
-        number_of_iterations : Number of turbo iterations
-    Returns:
-        hard_decision_bits : Hard-decoded information bits
-        llr_iterations    : LLR values at each iteration
-    """
-    total_length = len(systematic_1)
+def bcjr_maxlog_terminated(llr_sys, llr_par, llr_apriori):
+    llr_sys = np.asarray(llr_sys, dtype=float)
+    llr_par = np.asarray(llr_par, dtype=float)
+    llr_apriori = np.asarray(llr_apriori, dtype=float)
+    n = len(llr_sys)
+    neg_inf = -1e15
+
+    alpha = np.full((n + 1, NSTATES), neg_inf, dtype=float)
+    beta = np.full((n + 1, NSTATES), neg_inf, dtype=float)
+    alpha[0, 0] = 0.0
+    beta[n, 0] = 0.0
+
+    gamma0 = np.zeros((n, NSTATES), dtype=float)
+    gamma1 = np.zeros((n, NSTATES), dtype=float)
+    for k in range(n):
+        for s in range(NSTATES):
+            gamma0[k, s] = 0.5 * ((llr_sys[k] + llr_apriori[k]) * INPUT_SIGN[s, 0] + llr_par[k] * PARITY_SIGN[s, 0])
+            gamma1[k, s] = 0.5 * ((llr_sys[k] + llr_apriori[k]) * INPUT_SIGN[s, 1] + llr_par[k] * PARITY_SIGN[s, 1])
+
+    for k in range(n):
+        for ns in range(NSTATES):
+            best = neg_inf
+            for s, u in PREV_STATES[ns]:
+                g = gamma0[k, s] if u == 0 else gamma1[k, s]
+                cand = alpha[k, s] + g
+                if cand > best:
+                    best = cand
+            alpha[k + 1, ns] = best
+
+    for k in range(n - 1, -1, -1):
+        for s in range(NSTATES):
+            best = neg_inf
+            for ns, u in NEXT_STATES[s]:
+                g = gamma0[k, s] if u == 0 else gamma1[k, s]
+                cand = beta[k + 1, ns] + g
+                if cand > best:
+                    best = cand
+            beta[k, s] = best
+
+    llr_post = np.zeros(n, dtype=float)
+    for k in range(n):
+        best0 = neg_inf
+        best1 = neg_inf
+        for s in range(NSTATES):
+            ns0 = NEXT_STATE[s, 0]
+            ns1 = NEXT_STATE[s, 1]
+            v0 = alpha[k, s] + gamma0[k, s] + beta[k + 1, ns0]
+            v1 = alpha[k, s] + gamma1[k, s] + beta[k + 1, ns1]
+            if v0 > best0:
+                best0 = v0
+            if v1 > best1:
+                best1 = v1
+        llr_post[k] = best0 - best1
+
+    llr_ext = llr_post - llr_sys - llr_apriori
+    return llr_post, llr_ext
+
+
+def turbo_decode(sys1_rx, par1_rx, par2_rx, interleaver, sigma2, n_iterations):
+    n_total = len(sys1_rx)
     deinterleaver = np.argsort(interleaver)
-    channel_scaling_factor = 2.0 / noise_variance
+    Lc = 2.0 / sigma2
 
-    llr_systematic_1 = channel_scaling_factor * systematic_1
-    llr_parity_1 = channel_scaling_factor * parity_1
-    llr_parity_2 = channel_scaling_factor * parity_2
+    llr_sys1 = Lc * sys1_rx
+    llr_par1 = Lc * par1_rx
+    llr_par2 = Lc * par2_rx
 
-    apriori_1 = np.zeros(total_length, dtype=float)
-    llr_iterations = []
-    extrinsic_scaling_factor = 0.75
+    apriori1 = np.zeros(n_total, dtype=float)
+    llr_iters = []
+    ext_scale = 0.75
 
-    permutation_full = np.concatenate([interleaver, np.arange(len(systematic_1), total_length)])
-    inverse_permutation_full = np.argsort(permutation_full)
+    perm_full = np.concatenate([interleaver, np.arange(K, n_total)])
+    inv_full = np.argsort(perm_full)
 
-    for _ in range(number_of_iterations):
-        _, extrinsic_1 = rsc_max_log_map_terminated(llr_systematic_1, llr_parity_1, apriori_1)
-        apriori_2 = np.zeros(total_length, dtype=float)
-        apriori_2[:len(interleaver)] = extrinsic_scaling_factor * extrinsic_1[interleaver]
+    for _ in range(n_iterations):
+        _, ext1 = bcjr_maxlog_terminated(llr_sys1, llr_par1, apriori1)
+        apriori2 = np.zeros(n_total, dtype=float)
+        apriori2[:K] = ext_scale * ext1[interleaver]
 
-        system_interleaved = np.zeros(total_length, dtype=float)
-        system_interleaved[:len(interleaver)] = llr_systematic_1[interleaver]
+        sys2_int = np.zeros(n_total, dtype=float)
+        sys2_int[:K] = llr_sys1[interleaver]
+        post2_int, ext2_int = bcjr_maxlog_terminated(sys2_int, llr_par2, apriori2)
 
-        posterior_interleaved, extrinsic_interleaved = rsc_max_log_map_terminated(system_interleaved, llr_parity_2, apriori_2)
+        post_info = np.zeros(K, dtype=float)
+        post_info[interleaver] = post2_int[:K]
 
-        posterior_info = np.zeros(len(interleaver), dtype=float)
-        posterior_info[interleaver] = posterior_interleaved[:len(interleaver)]
-        extrinsic_info = np.zeros(len(interleaver), dtype=float)
-        extrinsic_info[interleaver] = extrinsic_interleaved[:len(interleaver)]
+        ext_info = np.zeros(K, dtype=float)
+        ext_info[interleaver] = ext2_int[:K]
 
-        llr_total = posterior_info.copy()
-        llr_iterations.append(llr_total.copy())
+        llr_total = post_info.copy()
+        llr_iters.append(llr_total)
 
-        apriori_1[:len(interleaver)] = extrinsic_scaling_factor * extrinsic_info
+        apriori1[:K] = ext_scale * ext_info
 
-    hard_decision_bits = (llr_iterations[-1] < 0.0).astype(np.int8)
-    return hard_decision_bits, llr_iterations
+    hard = (llr_iters[-1] < 0.0).astype(np.int8)
+    return hard, llr_iters
