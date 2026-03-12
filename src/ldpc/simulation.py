@@ -1,11 +1,10 @@
 """
-Simulation routines for the optimized LDPC project.
+LDPC simulation routines for multi-rate experiments.
 """
 
 import numpy as np
 
 from config import (
-    CODE_RATE,
     DECODER_ITERATION_LIST,
     INFORMATION_BIT_COUNT,
     LDPC_EB_NO_DB,
@@ -13,6 +12,7 @@ from config import (
     MINIMUM_FRAME_COUNT,
     PARITY_BIT_COUNT,
     RANDOM_SEED,
+    SELECTED_CODE_RATE,
     TARGET_ERROR_COUNT,
 )
 from decoder import decode_codeword_with_layered_min_sum
@@ -20,13 +20,11 @@ from encoder import encode_information_bits
 
 
 def noise_variance_from_ebn0(ebn0_db, code_rate):
-    """Convert Eb/N0 in dB to AWGN variance for BPSK."""
     ebn0_linear = 10.0 ** (ebn0_db / 10.0)
     return 1.0 / (2.0 * code_rate * ebn0_linear)
 
 
 def run_ldpc_simulation(random_generator=None):
-    """Run BER simulations for all configured Eb/N0 points and iteration counts."""
     if random_generator is None:
         random_generator = np.random.default_rng(RANDOM_SEED)
 
@@ -36,7 +34,7 @@ def run_ldpc_simulation(random_generator=None):
     codeword_length = INFORMATION_BIT_COUNT + PARITY_BIT_COUNT
 
     for ebn0_db in LDPC_EB_NO_DB:
-        noise_variance = noise_variance_from_ebn0(ebn0_db, CODE_RATE)
+        noise_variance = noise_variance_from_ebn0(ebn0_db, SELECTED_CODE_RATE)
         noise_standard_deviation = np.sqrt(noise_variance)
 
         bit_errors = {iteration_count: 0 for iteration_count in DECODER_ITERATION_LIST}
@@ -53,7 +51,6 @@ def run_ldpc_simulation(random_generator=None):
             information_bits = random_generator.integers(
                 0, 2, INFORMATION_BIT_COUNT, dtype=np.int8
             )
-
             codeword = encode_information_bits(information_bits)
 
             transmitted_symbols = 1.0 - 2.0 * codeword
@@ -78,25 +75,19 @@ def run_ldpc_simulation(random_generator=None):
             frame_count += 1
 
         for iteration_count in DECODER_ITERATION_LIST:
-            ber_value = bit_errors[iteration_count] / transmitted_information_bits
-            ber_by_iteration[iteration_count].append(ber_value)
+            ber_by_iteration[iteration_count].append(bit_errors[iteration_count] / transmitted_information_bits)
 
         print(
-            "ldpc Eb/N0={:4.2f} dB frames={} ".format(ebn0_db, frame_count)
+            "ldpc rate={} Eb/N0={:4.2f} dB frames={} ".format(SELECTED_CODE_RATE, ebn0_db, frame_count)
             + ", ".join(
                 [
-                    "it{}={:.4e}".format(
-                        iteration_count,
-                        ber_by_iteration[iteration_count][-1],
-                    )
+                    f"it{iteration_count}={ber_by_iteration[iteration_count][-1]:.4e}"
                     for iteration_count in DECODER_ITERATION_LIST
                 ]
             )
         )
 
     for iteration_count in DECODER_ITERATION_LIST:
-        ber_by_iteration[iteration_count] = np.array(
-            ber_by_iteration[iteration_count], dtype=float
-        )
+        ber_by_iteration[iteration_count] = np.array(ber_by_iteration[iteration_count], dtype=float)
 
     return ber_by_iteration, llr_snapshot
