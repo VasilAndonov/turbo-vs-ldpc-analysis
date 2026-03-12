@@ -66,11 +66,9 @@ def plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot):
 def main():
     random_generator = np.random.default_rng(RANDOM_SEED)
     start_time = time.time()
-
     convolutional_ber = run_convolutional_simulation(random_generator)
     turbo_ber_by_iteration, llr_snapshot = run_turbo_simulation(random_generator)
     plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot)
-
     print(f"Turbo simulation finished in {time.time() - start_time:.2f} seconds")
 
 if __name__ == "__main__":
