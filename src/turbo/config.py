@@ -5,7 +5,7 @@ Multi-rate turbo-code configuration.
 import numpy as np
 
 RANDOM_SEED = 12
-INFORMATION_BLOCK_LENGTH = 256
+INFORMATION_BLOCK_LENGTH = 4000
 
 SUPPORTED_CODE_RATES = {
     "1/3": 1.0 / 3.0,
@@ -15,7 +15,7 @@ SUPPORTED_CODE_RATES = {
 }
 
 SELECTED_CODE_RATE = SUPPORTED_CODE_RATES["1/3"]
-DECODER_ITERATION_LIST = [1, 2, 3, 4, 5, 6]
+DECODER_ITERATION_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 CONVOLUTIONAL_EB_NO_DB = np.arange(-4.0, 5.0, 1.0, dtype=float)
 TURBO_EB_NO_DB = np.arange(-1.0, 1.76, 0.25, dtype=float)
