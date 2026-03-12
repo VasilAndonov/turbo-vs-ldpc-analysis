@@ -1,10 +1,13 @@
 """
-Turbo-code simulation routines.
+Turbo-code simulation and benchmark routines.
 """
 
+import time
 import numpy as np
 
 from config import (
+    BENCHMARK_BLOCK_COUNT,
+    BENCHMARK_EB_NO_DB,
     CONVOLUTIONAL_EB_NO_DB,
     CONVOLUTIONAL_MAXIMUM_FRAME_COUNT,
     CONVOLUTIONAL_MINIMUM_FRAME_COUNT,
@@ -12,14 +15,18 @@ from config import (
     DECODER_ITERATION_LIST,
     INFORMATION_BLOCK_LENGTH,
     RANDOM_SEED,
-    SELECTED_CODE_RATE,
     TURBO_EB_NO_DB,
     TURBO_MAXIMUM_FRAME_COUNT,
     TURBO_MINIMUM_FRAME_COUNT,
     TURBO_TARGET_ERROR_COUNT,
 )
 from decoder import decode_turbo, decode_viterbi_75
-from encoder import depuncture_received_parity, encode_convolutional_75, turbo_encode_transmitted_symbols
+from encoder import (
+    count_transmitted_symbols,
+    depuncture_received_parity,
+    encode_convolutional_75,
+    turbo_encode_transmitted_symbols,
+)
 
 def noise_variance_from_ebn0(ebn0_db, code_rate):
     ebn0_linear = 10.0 ** (ebn0_db / 10.0)
@@ -34,7 +41,6 @@ def run_convolutional_simulation(random_generator=None):
     for ebn0_db in CONVOLUTIONAL_EB_NO_DB:
         noise_variance = noise_variance_from_ebn0(ebn0_db, 0.5)
         noise_standard_deviation = np.sqrt(noise_variance)
-
         bit_errors = 0
         transmitted_information_bits = 0
         frame_count = 0
@@ -51,16 +57,13 @@ def run_convolutional_simulation(random_generator=None):
             transmitted_symbols = 1.0 - 2.0 * encoded_bits
             received_symbols = transmitted_symbols + noise_standard_deviation * random_generator.standard_normal(len(transmitted_symbols))
             decoded_bits = decode_viterbi_75(received_symbols, INFORMATION_BLOCK_LENGTH)
-
             bit_errors += int(np.sum(information_bits != decoded_bits))
             transmitted_information_bits += INFORMATION_BLOCK_LENGTH
             frame_count += 1
 
-        ber_value = bit_errors / transmitted_information_bits
-        ber_values.append(ber_value)
+        ber_values.append(bit_errors / transmitted_information_bits)
 
     return np.array(ber_values, dtype=float)
-
 
 def run_turbo_simulation(random_generator=None):
     if random_generator is None:
@@ -71,9 +74,6 @@ def run_turbo_simulation(random_generator=None):
     total_encoded_length = INFORMATION_BLOCK_LENGTH + 2
 
     for ebn0_db in TURBO_EB_NO_DB:
-        noise_variance = noise_variance_from_ebn0(ebn0_db, SELECTED_CODE_RATE)
-        noise_standard_deviation = np.sqrt(noise_variance)
-
         bit_errors = {iteration_count: 0 for iteration_count in DECODER_ITERATION_LIST}
         transmitted_information_bits = 0
         frame_count = 0
@@ -87,6 +87,15 @@ def run_turbo_simulation(random_generator=None):
         ):
             information_bits = random_generator.integers(0, 2, INFORMATION_BLOCK_LENGTH, dtype=np.int8)
             encoded = turbo_encode_transmitted_symbols(information_bits)
+
+            transmitted_symbol_count = count_transmitted_symbols(
+                encoded["parity_keep_mask_1"],
+                encoded["parity_keep_mask_2"],
+            )
+            effective_code_rate = INFORMATION_BLOCK_LENGTH / transmitted_symbol_count
+
+            noise_variance = noise_variance_from_ebn0(ebn0_db, effective_code_rate)
+            noise_standard_deviation = np.sqrt(noise_variance)
 
             transmitted_systematic_symbols = 1.0 - 2.0 * encoded["systematic_stream_1"]
             transmitted_parity_symbols_1 = 1.0 - 2.0 * encoded["transmitted_parity_stream_1"]
@@ -125,3 +134,49 @@ def run_turbo_simulation(random_generator=None):
         ber_by_iteration[iteration_count] = np.array(ber_by_iteration[iteration_count], dtype=float)
 
     return ber_by_iteration, llr_snapshot
+
+def benchmark_turbo_decoder(random_generator=None):
+    if random_generator is None:
+        random_generator = np.random.default_rng(RANDOM_SEED)
+
+    measurements = {}
+    total_encoded_length = INFORMATION_BLOCK_LENGTH + 2
+
+    for iteration_count in DECODER_ITERATION_LIST:
+        start_time = time.perf_counter()
+
+        for _ in range(BENCHMARK_BLOCK_COUNT):
+            information_bits = random_generator.integers(0, 2, INFORMATION_BLOCK_LENGTH, dtype=np.int8)
+            encoded = turbo_encode_transmitted_symbols(information_bits)
+
+            transmitted_symbol_count = count_transmitted_symbols(
+                encoded["parity_keep_mask_1"],
+                encoded["parity_keep_mask_2"],
+            )
+            effective_code_rate = INFORMATION_BLOCK_LENGTH / transmitted_symbol_count
+
+            noise_variance = noise_variance_from_ebn0(BENCHMARK_EB_NO_DB, effective_code_rate)
+            noise_standard_deviation = np.sqrt(noise_variance)
+
+            transmitted_systematic_symbols = 1.0 - 2.0 * encoded["systematic_stream_1"]
+            transmitted_parity_symbols_1 = 1.0 - 2.0 * encoded["transmitted_parity_stream_1"]
+            transmitted_parity_symbols_2 = 1.0 - 2.0 * encoded["transmitted_parity_stream_2"]
+
+            received_systematic_symbols = transmitted_systematic_symbols + noise_standard_deviation * random_generator.standard_normal(total_encoded_length)
+            received_parity_symbols_1 = transmitted_parity_symbols_1 + noise_standard_deviation * random_generator.standard_normal(len(transmitted_parity_symbols_1))
+            received_parity_symbols_2 = transmitted_parity_symbols_2 + noise_standard_deviation * random_generator.standard_normal(len(transmitted_parity_symbols_2))
+
+            received_parity_stream_1_full = depuncture_received_parity(received_parity_symbols_1, encoded["parity_keep_mask_1"])
+            received_parity_stream_2_full = depuncture_received_parity(received_parity_symbols_2, encoded["parity_keep_mask_2"])
+
+            decode_turbo(
+                received_systematic_stream_1=received_systematic_symbols,
+                received_parity_stream_1_full=received_parity_stream_1_full,
+                received_parity_stream_2_full=received_parity_stream_2_full,
+                noise_variance=noise_variance,
+                iteration_count=iteration_count,
+            )
+
+        measurements[iteration_count] = time.perf_counter() - start_time
+
+    return measurements
