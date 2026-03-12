@@ -1,10 +1,13 @@
 """
-LDPC simulation routines for multi-rate experiments.
+LDPC simulation and benchmark routines.
 """
 
+import time
 import numpy as np
 
 from config import (
+    BENCHMARK_BLOCK_COUNT,
+    BENCHMARK_EB_NO_DB,
     DECODER_ITERATION_LIST,
     INFORMATION_BIT_COUNT,
     LDPC_EB_NO_DB,
@@ -33,7 +36,6 @@ def run_ldpc_simulation(random_generator=None):
     for ebn0_db in LDPC_EB_NO_DB:
         noise_variance = noise_variance_from_ebn0(ebn0_db, SELECTED_CODE_RATE)
         noise_standard_deviation = np.sqrt(noise_variance)
-
         bit_errors = {iteration_count: 0 for iteration_count in DECODER_ITERATION_LIST}
         transmitted_information_bits = 0
         frame_count = 0
@@ -75,3 +77,31 @@ def run_ldpc_simulation(random_generator=None):
         ber_by_iteration[iteration_count] = np.array(ber_by_iteration[iteration_count], dtype=float)
 
     return ber_by_iteration, llr_snapshot
+
+def benchmark_ldpc_decoder(random_generator=None):
+    if random_generator is None:
+        random_generator = np.random.default_rng(RANDOM_SEED)
+
+    measurements = {}
+    codeword_length = INFORMATION_BIT_COUNT + PARITY_BIT_COUNT
+    noise_variance = noise_variance_from_ebn0(BENCHMARK_EB_NO_DB, SELECTED_CODE_RATE)
+    noise_standard_deviation = np.sqrt(noise_variance)
+
+    for iteration_count in DECODER_ITERATION_LIST:
+        start_time = time.perf_counter()
+
+        for _ in range(BENCHMARK_BLOCK_COUNT):
+            information_bits = random_generator.integers(0, 2, INFORMATION_BIT_COUNT, dtype=np.int8)
+            codeword = encode_information_bits(information_bits)
+            transmitted_symbols = 1.0 - 2.0 * codeword
+            received_symbols = transmitted_symbols + noise_standard_deviation * random_generator.standard_normal(codeword_length)
+
+            decode_codeword_with_layered_min_sum(
+                received_symbols=received_symbols,
+                noise_variance=noise_variance,
+                iteration_count=iteration_count,
+            )
+
+        measurements[iteration_count] = time.perf_counter() - start_time
+
+    return measurements
