@@ -1,9 +1,4 @@
-"""
-Main entry point for the multi-rate LDPC project.
-"""
-
 import time
-
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -16,7 +11,6 @@ from config import (
     get_rate_label,
 )
 from simulation import run_ldpc_simulation
-
 
 def plot_results(ber_by_iteration, llr_snapshot):
     floor_value = 1e-8
@@ -43,12 +37,7 @@ def plot_results(ber_by_iteration, llr_snapshot):
     plt.figure(figsize=(8.0, 5.0))
     for iteration_count in DECODER_ITERATION_LIST:
         if llr_snapshot[iteration_count] is not None:
-            plt.scatter(
-                range(len(llr_snapshot[iteration_count])),
-                llr_snapshot[iteration_count],
-                s=18,
-                label=f"Iteration {iteration_count}",
-            )
+            plt.scatter(range(len(llr_snapshot[iteration_count])), llr_snapshot[iteration_count], s=18, label=f"Iteration {iteration_count}")
 
     plt.xlabel("Bit index")
     plt.ylabel("Posterior LLR")
@@ -60,7 +49,6 @@ def plot_results(ber_by_iteration, llr_snapshot):
         plt.savefig(f"{SAVE_PREFIX}_llr_{get_rate_label().replace('/', '_')}.png", dpi=170)
     plt.show()
 
-
 def main():
     random_generator = np.random.default_rng(RANDOM_SEED)
     start_time = time.time()
@@ -69,7 +57,6 @@ def main():
     plot_results(ber_by_iteration, llr_snapshot)
 
     print(f"LDPC simulation finished in {time.time() - start_time:.2f} seconds")
-
 
 if __name__ == "__main__":
     main()
