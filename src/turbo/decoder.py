@@ -1,200 +1,153 @@
 """
-Turbo and convolutional decoders.
+Turbo-code simulation routines.
 
-Turbo decoding uses terminated max-log-MAP constituent decoding and exchanges
-extrinsic information between the two constituent decoders.
+The selected code rate is used for the turbo portion by puncturing parity
+streams. The conventional baseline remains the same rate-1/2 convolutional code.
 """
 
 import numpy as np
 
 from config import (
+    CONVOLUTIONAL_EB_NO_DB,
+    CONVOLUTIONAL_MAXIMUM_FRAME_COUNT,
+    CONVOLUTIONAL_MINIMUM_FRAME_COUNT,
+    CONVOLUTIONAL_TARGET_ERROR_COUNT,
     DECODER_ITERATION_LIST,
     INFORMATION_BLOCK_LENGTH,
-    RSC_STATE_COUNT,
+    RANDOM_SEED,
+    SELECTED_CODE_RATE,
+    TURBO_EB_NO_DB,
+    TURBO_MAXIMUM_FRAME_COUNT,
+    TURBO_MINIMUM_FRAME_COUNT,
+    TURBO_TARGET_ERROR_COUNT,
 )
+from decoder import decode_turbo, decode_viterbi_75
 from encoder import (
-    DEINTERLEAVER,
-    INPUT_SIGN,
-    INTERLEAVER,
-    NEXT_STATE,
-    PARITY_SIGN,
-    PREDECESSOR_LIST,
-    SUCCESSOR_LIST,
+    build_puncture_mask,
+    depuncture_received_parity,
+    encode_convolutional_75,
+    turbo_encode_transmitted_symbols,
 )
 
 
-def decode_viterbi_75(received_values, information_length):
-    """
-    Soft-decision Viterbi decoding for the rate-1/2 convolutional baseline.
-    """
-    received_values = np.asarray(received_values, dtype=float)
-    step_count = len(received_values) // 2
-
-    path_metric = np.full((step_count + 1, RSC_STATE_COUNT), 1e30, dtype=float)
-    predecessor_state = np.full((step_count + 1, RSC_STATE_COUNT), -1, dtype=int)
-    predecessor_input = np.full((step_count + 1, RSC_STATE_COUNT), -1, dtype=int)
-
-    path_metric[0, 0] = 0.0
-
-    for step_index in range(step_count):
-        received_0 = received_values[2 * step_index]
-        received_1 = received_values[2 * step_index + 1]
-
-        for state in range(RSC_STATE_COUNT):
-            current_metric = path_metric[step_index, state]
-            if current_metric > 1e20:
-                continue
-
-            register_bit_0 = (state >> 1) & 1
-            register_bit_1 = state & 1
-
-            for information_bit in (0, 1):
-                output_0 = information_bit ^ register_bit_0 ^ register_bit_1
-                output_1 = information_bit ^ register_bit_1
-                next_state = (information_bit << 1) | register_bit_0
-
-                expected_0 = 1.0 if output_0 == 0 else -1.0
-                expected_1 = 1.0 if output_1 == 0 else -1.0
-
-                branch_metric = (received_0 - expected_0) ** 2 + (received_1 - expected_1) ** 2
-                candidate_metric = current_metric + branch_metric
-
-                if candidate_metric < path_metric[step_index + 1, next_state]:
-                    path_metric[step_index + 1, next_state] = candidate_metric
-                    predecessor_state[step_index + 1, next_state] = state
-                    predecessor_input[step_index + 1, next_state] = information_bit
-
-    decoded_bits = []
-    state = 0
-    for step_index in range(step_count, 0, -1):
-        decoded_bits.append(predecessor_input[step_index, state])
-        state = predecessor_state[step_index, state]
-
-    decoded_bits.reverse()
-    return np.array(decoded_bits[:information_length], dtype=np.int8)
+def noise_variance_from_ebn0(ebn0_db, code_rate):
+    ebn0_linear = 10.0 ** (ebn0_db / 10.0)
+    return 1.0 / (2.0 * code_rate * ebn0_linear)
 
 
-def maxlogmap_decode_terminated(systematic_llr, parity_llr, apriori_llr):
-    """
-    One terminated constituent decode using max-log-MAP.
-    """
-    systematic_llr = np.asarray(systematic_llr, dtype=float)
-    parity_llr = np.asarray(parity_llr, dtype=float)
-    apriori_llr = np.asarray(apriori_llr, dtype=float)
+def run_convolutional_simulation(random_generator=None):
+    if random_generator is None:
+        random_generator = np.random.default_rng(RANDOM_SEED)
 
-    symbol_count = len(systematic_llr)
-    negative_infinity = -1e15
+    ber_values = []
 
-    alpha = np.full((symbol_count + 1, RSC_STATE_COUNT), negative_infinity, dtype=float)
-    beta = np.full((symbol_count + 1, RSC_STATE_COUNT), negative_infinity, dtype=float)
-    alpha[0, 0] = 0.0
-    beta[symbol_count, 0] = 0.0
+    for ebn0_db in CONVOLUTIONAL_EB_NO_DB:
+        noise_variance = noise_variance_from_ebn0(ebn0_db, 0.5)
+        noise_standard_deviation = np.sqrt(noise_variance)
 
-    gamma_for_zero = np.zeros((symbol_count, RSC_STATE_COUNT), dtype=float)
-    gamma_for_one = np.zeros((symbol_count, RSC_STATE_COUNT), dtype=float)
+        bit_errors = 0
+        transmitted_information_bits = 0
+        frame_count = 0
 
-    for symbol_index in range(symbol_count):
-        for state in range(RSC_STATE_COUNT):
-            gamma_for_zero[symbol_index, state] = 0.5 * (
-                (systematic_llr[symbol_index] + apriori_llr[symbol_index]) * INPUT_SIGN[state, 0]
-                + parity_llr[symbol_index] * PARITY_SIGN[state, 0]
+        while (
+            frame_count < CONVOLUTIONAL_MINIMUM_FRAME_COUNT
+            or (
+                bit_errors < CONVOLUTIONAL_TARGET_ERROR_COUNT
+                and frame_count < CONVOLUTIONAL_MAXIMUM_FRAME_COUNT
             )
-            gamma_for_one[symbol_index, state] = 0.5 * (
-                (systematic_llr[symbol_index] + apriori_llr[symbol_index]) * INPUT_SIGN[state, 1]
-                + parity_llr[symbol_index] * PARITY_SIGN[state, 1]
+        ):
+            information_bits = random_generator.integers(0, 2, INFORMATION_BLOCK_LENGTH, dtype=np.int8)
+            encoded_bits = encode_convolutional_75(information_bits)
+
+            transmitted_symbols = 1.0 - 2.0 * encoded_bits
+            received_symbols = transmitted_symbols + noise_standard_deviation * random_generator.standard_normal(len(transmitted_symbols))
+
+            decoded_bits = decode_viterbi_75(received_symbols, INFORMATION_BLOCK_LENGTH)
+
+            bit_errors += int(np.sum(information_bits != decoded_bits))
+            transmitted_information_bits += INFORMATION_BLOCK_LENGTH
+            frame_count += 1
+
+        ber_value = bit_errors / transmitted_information_bits
+        ber_values.append(ber_value)
+        print(f"conv Eb/N0={ebn0_db:4.1f} dB BER={ber_value:.4e} frames={frame_count}")
+
+    return np.array(ber_values, dtype=float)
+
+
+def run_turbo_simulation(random_generator=None):
+    if random_generator is None:
+        random_generator = np.random.default_rng(RANDOM_SEED)
+
+    ber_by_iteration = {iteration_count: [] for iteration_count in DECODER_ITERATION_LIST}
+    llr_snapshot = {iteration_count: None for iteration_count in DECODER_ITERATION_LIST}
+
+    total_encoded_length = INFORMATION_BLOCK_LENGTH + 2
+
+    for ebn0_db in TURBO_EB_NO_DB:
+        noise_variance = noise_variance_from_ebn0(ebn0_db, SELECTED_CODE_RATE)
+        noise_standard_deviation = np.sqrt(noise_variance)
+
+        bit_errors = {iteration_count: 0 for iteration_count in DECODER_ITERATION_LIST}
+        transmitted_information_bits = 0
+        frame_count = 0
+
+        while (
+            frame_count < TURBO_MINIMUM_FRAME_COUNT
+            or (
+                bit_errors[max(DECODER_ITERATION_LIST)] < TURBO_TARGET_ERROR_COUNT
+                and frame_count < TURBO_MAXIMUM_FRAME_COUNT
+            )
+        ):
+            information_bits = random_generator.integers(0, 2, INFORMATION_BLOCK_LENGTH, dtype=np.int8)
+            encoded = turbo_encode_transmitted_symbols(information_bits)
+
+            transmitted_systematic_symbols = 1.0 - 2.0 * encoded["systematic_stream_1"]
+            transmitted_parity_symbols_1 = 1.0 - 2.0 * encoded["transmitted_parity_stream_1"]
+            transmitted_parity_symbols_2 = 1.0 - 2.0 * encoded["transmitted_parity_stream_2"]
+
+            received_systematic_symbols = transmitted_systematic_symbols + noise_standard_deviation * random_generator.standard_normal(total_encoded_length)
+            received_parity_symbols_1 = transmitted_parity_symbols_1 + noise_standard_deviation * random_generator.standard_normal(len(transmitted_parity_symbols_1))
+            received_parity_symbols_2 = transmitted_parity_symbols_2 + noise_standard_deviation * random_generator.standard_normal(len(transmitted_parity_symbols_2))
+
+            received_parity_stream_1_full = depuncture_received_parity(received_parity_symbols_1, encoded["parity_keep_mask_1"])
+            received_parity_stream_2_full = depuncture_received_parity(received_parity_symbols_2, encoded["parity_keep_mask_2"])
+
+            _, llr_history = decode_turbo(
+                received_systematic_stream_1=received_systematic_symbols,
+                received_parity_stream_1_full=received_parity_stream_1_full,
+                received_parity_stream_2_full=received_parity_stream_2_full,
+                noise_variance=noise_variance,
+                iteration_count=max(DECODER_ITERATION_LIST),
             )
 
-    for symbol_index in range(symbol_count):
-        for next_state in range(RSC_STATE_COUNT):
-            best_value = negative_infinity
-            for state, input_bit in PREDECESSOR_LIST[next_state]:
-                gamma = gamma_for_zero[symbol_index, state] if input_bit == 0 else gamma_for_one[symbol_index, state]
-                candidate = alpha[symbol_index, state] + gamma
-                if candidate > best_value:
-                    best_value = candidate
-            alpha[symbol_index + 1, next_state] = best_value
+            for iteration_count in DECODER_ITERATION_LIST:
+                hard_information_bits = (llr_history[iteration_count - 1] < 0.0).astype(np.int8)
+                bit_errors[iteration_count] += int(np.sum(information_bits != hard_information_bits))
 
-    for symbol_index in range(symbol_count - 1, -1, -1):
-        for state in range(RSC_STATE_COUNT):
-            best_value = negative_infinity
-            for next_state, input_bit in SUCCESSOR_LIST[state]:
-                gamma = gamma_for_zero[symbol_index, state] if input_bit == 0 else gamma_for_one[symbol_index, state]
-                candidate = beta[symbol_index + 1, next_state] + gamma
-                if candidate > best_value:
-                    best_value = candidate
-            beta[symbol_index, state] = best_value
+            if ebn0_db == TURBO_EB_NO_DB[-1] and frame_count == 0:
+                for iteration_count in DECODER_ITERATION_LIST:
+                    llr_snapshot[iteration_count] = llr_history[iteration_count - 1][:20].copy()
 
-    posterior_llr = np.zeros(symbol_count, dtype=float)
-    for symbol_index in range(symbol_count):
-        best_zero = negative_infinity
-        best_one = negative_infinity
+            transmitted_information_bits += INFORMATION_BLOCK_LENGTH
+            frame_count += 1
 
-        for state in range(RSC_STATE_COUNT):
-            next_state_zero = NEXT_STATE[state, 0]
-            next_state_one = NEXT_STATE[state, 1]
+        for iteration_count in DECODER_ITERATION_LIST:
+            ber_by_iteration[iteration_count].append(
+                bit_errors[iteration_count] / transmitted_information_bits
+            )
 
-            candidate_zero = alpha[symbol_index, state] + gamma_for_zero[symbol_index, state] + beta[symbol_index + 1, next_state_zero]
-            candidate_one = alpha[symbol_index, state] + gamma_for_one[symbol_index, state] + beta[symbol_index + 1, next_state_one]
-
-            if candidate_zero > best_zero:
-                best_zero = candidate_zero
-            if candidate_one > best_one:
-                best_one = candidate_one
-
-        posterior_llr[symbol_index] = best_zero - best_one
-
-    extrinsic_llr = posterior_llr - systematic_llr - apriori_llr
-    return posterior_llr, extrinsic_llr
-
-
-def decode_turbo(
-    received_systematic_stream_1,
-    received_parity_stream_1_full,
-    received_parity_stream_2_full,
-    noise_variance,
-    iteration_count,
-):
-    """
-    Iterative turbo decoding on the full depunctured streams.
-    """
-    total_length = len(received_systematic_stream_1)
-    channel_reliability = 2.0 / noise_variance
-
-    systematic_llr_1 = channel_reliability * np.asarray(received_systematic_stream_1, dtype=float)
-    parity_llr_1 = channel_reliability * np.asarray(received_parity_stream_1_full, dtype=float)
-    parity_llr_2 = channel_reliability * np.asarray(received_parity_stream_2_full, dtype=float)
-
-    apriori_llr_decoder_1 = np.zeros(total_length, dtype=float)
-    llr_history = []
-    extrinsic_scale = 0.75
-
-    for _ in range(iteration_count):
-        _, extrinsic_llr_1 = maxlogmap_decode_terminated(
-            systematic_llr_1,
-            parity_llr_1,
-            apriori_llr_decoder_1,
+        print(
+            "turbo rate={} Eb/N0={:4.2f} dB frames={} ".format(SELECTED_CODE_RATE, ebn0_db, frame_count)
+            + ", ".join(
+                [
+                    f"it{iteration_count}={ber_by_iteration[iteration_count][-1]:.4e}"
+                    for iteration_count in DECODER_ITERATION_LIST
+                ]
+            )
         )
 
-        apriori_llr_decoder_2 = np.zeros(total_length, dtype=float)
-        apriori_llr_decoder_2[:INFORMATION_BLOCK_LENGTH] = extrinsic_scale * extrinsic_llr_1[INTERLEAVER]
+    for iteration_count in DECODER_ITERATION_LIST:
+        ber_by_iteration[iteration_count] = np.array(ber_by_iteration[iteration_count], dtype=float)
 
-        interleaved_systematic_llr = np.zeros(total_length, dtype=float)
-        interleaved_systematic_llr[:INFORMATION_BLOCK_LENGTH] = systematic_llr_1[INTERLEAVER]
-
-        posterior_llr_2_interleaved, extrinsic_llr_2_interleaved = maxlogmap_decode_terminated(
-            interleaved_systematic_llr,
-            parity_llr_2,
-            apriori_llr_decoder_2,
-        )
-
-        posterior_information_llr = np.zeros(INFORMATION_BLOCK_LENGTH, dtype=float)
-        posterior_information_llr[INTERLEAVER] = posterior_llr_2_interleaved[:INFORMATION_BLOCK_LENGTH]
-
-        extrinsic_information_llr = np.zeros(INFORMATION_BLOCK_LENGTH, dtype=float)
-        extrinsic_information_llr[INTERLEAVER] = extrinsic_llr_2_interleaved[:INFORMATION_BLOCK_LENGTH]
-
-        llr_history.append(posterior_information_llr.copy())
-        apriori_llr_decoder_1[:INFORMATION_BLOCK_LENGTH] = extrinsic_scale * extrinsic_information_llr
-
-    hard_information_bits = (llr_history[-1] < 0.0).astype(np.int8)
-    return hard_information_bits, llr_history
+    return ber_by_iteration, llr_snapshot
