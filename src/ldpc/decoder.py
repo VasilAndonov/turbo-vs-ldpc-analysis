@@ -10,7 +10,6 @@ from encoder import CHECK_TO_VARIABLE_NEIGHBORS
 def channel_llr_from_received_symbols(received_symbols, noise_variance):
     return (2.0 / noise_variance) * np.asarray(received_symbols, dtype=float)
 
-
 def decode_codeword_with_layered_min_sum(received_symbols, noise_variance, iteration_count):
     channel_llr = channel_llr_from_received_symbols(received_symbols, noise_variance)
     posterior_llr = channel_llr.copy()
@@ -32,7 +31,6 @@ def decode_codeword_with_layered_min_sum(received_symbols, noise_variance, itera
 
             smallest_index = int(np.argmin(absolute_values))
             smallest_value = absolute_values[smallest_index]
-
             masked_values = absolute_values.copy()
             masked_values[smallest_index] = np.inf
             second_smallest_value = np.min(masked_values)
