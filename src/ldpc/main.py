@@ -1,5 +1,5 @@
 """
-Main entry point for the optimized LDPC project.
+Main entry point for the multi-rate LDPC project.
 """
 
 import time
@@ -7,11 +7,18 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 
-from config import DECODER_ITERATION_LIST, LDPC_EB_NO_DB, RANDOM_SEED, SAVE_FIGURES, SAVE_PREFIX
+from config import (
+    DECODER_ITERATION_LIST,
+    LDPC_EB_NO_DB,
+    RANDOM_SEED,
+    SAVE_FIGURES,
+    SAVE_PREFIX,
+    get_rate_label,
+)
 from simulation import run_ldpc_simulation
 
 
-def plot_ldpc_results(ber_by_iteration, llr_snapshot):
+def plot_results(ber_by_iteration, llr_snapshot):
     floor_value = 1e-8
 
     plt.figure(figsize=(7.2, 4.8))
@@ -25,13 +32,12 @@ def plot_ldpc_results(ber_by_iteration, llr_snapshot):
 
     plt.xlabel("Eb/N0 (dB)")
     plt.ylabel("Bit error rate")
-    plt.title("Optimized LDPC code BER")
+    plt.title(f"LDPC BER, rate {get_rate_label()}")
     plt.grid(True, which="both", alpha=0.35)
     plt.legend()
     plt.tight_layout()
-
     if SAVE_FIGURES:
-        plt.savefig(f"{SAVE_PREFIX}_ber.png", dpi=170)
+        plt.savefig(f"{SAVE_PREFIX}_ber_{get_rate_label().replace('/', '_')}.png", dpi=170)
     plt.show()
 
     plt.figure(figsize=(8.0, 5.0))
@@ -46,13 +52,12 @@ def plot_ldpc_results(ber_by_iteration, llr_snapshot):
 
     plt.xlabel("Bit index")
     plt.ylabel("Posterior LLR")
-    plt.title("LDPC decoder confidence growth")
+    plt.title(f"LDPC decoder confidence growth, rate {get_rate_label()}")
     plt.grid(True, linestyle="--", alpha=0.45)
     plt.legend()
     plt.tight_layout()
-
     if SAVE_FIGURES:
-        plt.savefig(f"{SAVE_PREFIX}_llr.png", dpi=170)
+        plt.savefig(f"{SAVE_PREFIX}_llr_{get_rate_label().replace('/', '_')}.png", dpi=170)
     plt.show()
 
 
@@ -61,10 +66,9 @@ def main():
     start_time = time.time()
 
     ber_by_iteration, llr_snapshot = run_ldpc_simulation(random_generator)
-    plot_ldpc_results(ber_by_iteration, llr_snapshot)
+    plot_results(ber_by_iteration, llr_snapshot)
 
-    elapsed_seconds = time.time() - start_time
-    print(f"Optimized LDPC simulation finished in {elapsed_seconds:.2f} seconds")
+    print(f"LDPC simulation finished in {time.time() - start_time:.2f} seconds")
 
 
 if __name__ == "__main__":
