@@ -1,35 +1,17 @@
 """
 LDPC decoder.
-
-This file uses layered normalized min-sum decoding, which is a good practical
-compromise between complexity and performance for sparse parity-check graphs.
 """
 
 import numpy as np
 
 from config import NORMALIZATION_FACTOR
-from encoder import CHECK_TO_VARIABLE_NEIGHBORS, PARITY_CHECK_MATRIX
-
+from encoder import CHECK_TO_VARIABLE_NEIGHBORS
 
 def channel_llr_from_received_symbols(received_symbols, noise_variance):
-    """
-    Compute AWGN channel LLR values for BPSK.
-    """
     return (2.0 / noise_variance) * np.asarray(received_symbols, dtype=float)
 
 
-def decode_codeword_with_layered_min_sum(
-    received_symbols,
-    noise_variance,
-    iteration_count,
-):
-    """
-    Layered normalized min-sum decoding.
-
-    Returns:
-    - hard_decision_bits
-    - posterior_llr_history
-    """
+def decode_codeword_with_layered_min_sum(received_symbols, noise_variance, iteration_count):
     channel_llr = channel_llr_from_received_symbols(received_symbols, noise_variance)
     posterior_llr = channel_llr.copy()
     posterior_llr_history = []
@@ -60,12 +42,7 @@ def decode_codeword_with_layered_min_sum(
 
             for local_index in range(len(variable_indices)):
                 magnitude = second_smallest_value if local_index == smallest_index else smallest_value
-                new_messages[local_index] = (
-                    NORMALIZATION_FACTOR
-                    * total_sign
-                    * signs[local_index]
-                    * magnitude
-                )
+                new_messages[local_index] = NORMALIZATION_FACTOR * total_sign * signs[local_index] * magnitude
 
             check_to_variable_messages[check_index] = new_messages
             posterior_llr[variable_indices] = extrinsic_values + new_messages
