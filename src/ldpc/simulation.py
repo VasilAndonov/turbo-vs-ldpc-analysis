@@ -1,132 +1,102 @@
+"""
+Simulation routines for the optimized LDPC project.
+"""
+
 import numpy as np
 
 from config import (
-    RANDOM_SEED,
-    INFORMATION_BIT_COUNT,
     CODE_RATE,
-    EBN0_DECIBELS,
-    ITERATION_LIST,
-    MINIMUM_FRAME_COUNT,
+    DECODER_ITERATION_LIST,
+    INFORMATION_BIT_COUNT,
+    LDPC_EB_NO_DB,
     MAXIMUM_FRAME_COUNT,
+    MINIMUM_FRAME_COUNT,
+    PARITY_BIT_COUNT,
+    RANDOM_SEED,
     TARGET_ERROR_COUNT,
 )
-from encoder import encode_information_bits, verify_codeword
-from decoder import decode_codeword
-
-# ============================================================
-# Noise model
-# ============================================================
-# We use the same BPSK and AWGN conventions as in the turbo project:
-#   0 -> +1
-#   1 -> -1
-# and
-#   sigma^2 = 1 / (2 R Eb/N0)
-# where R is the code rate.
+from decoder import decode_codeword_with_layered_min_sum
+from encoder import encode_information_bits
 
 
-def compute_noise_variance_from_ebn0(ebn0_decibels, code_rate):
-    """Convert Eb/N0 in dB to AWGN noise variance."""
-    ebn0_linear = 10.0 ** (ebn0_decibels / 10.0)
+def noise_variance_from_ebn0(ebn0_db, code_rate):
+    """Convert Eb/N0 in dB to AWGN variance for BPSK."""
+    ebn0_linear = 10.0 ** (ebn0_db / 10.0)
     return 1.0 / (2.0 * code_rate * ebn0_linear)
 
 
+def run_ldpc_simulation(random_generator=None):
+    """Run BER simulations for all configured Eb/N0 points and iteration counts."""
+    if random_generator is None:
+        random_generator = np.random.default_rng(RANDOM_SEED)
 
-def map_bits_to_bpsk_symbols(bit_array):
-    """Map binary bits to BPSK symbols using 0 -> +1 and 1 -> -1."""
-    return 1.0 - 2.0 * np.asarray(bit_array, dtype=float)
+    ber_by_iteration = {iteration_count: [] for iteration_count in DECODER_ITERATION_LIST}
+    llr_snapshot = {iteration_count: None for iteration_count in DECODER_ITERATION_LIST}
 
+    codeword_length = INFORMATION_BIT_COUNT + PARITY_BIT_COUNT
 
-# ============================================================
-# Monte Carlo simulation
-# ============================================================
-# The simulation collects BER points for several iteration counts so that
-# the LDPC decoder can be compared directly against the turbo decoder.
-
-
-def run_ldpc_simulation(random_seed=RANDOM_SEED):
-    """Run BER simulation for the LDPC code over AWGN.
-
-    Returns
-    -------
-    bit_error_rate_results:
-        Dictionary mapping iteration number to BER curve.
-    llr_snapshot_by_iteration:
-        Posterior LLR samples from one high-SNR frame for plotting.
-    """
-    random_generator = np.random.default_rng(random_seed)
-
-    bit_error_rate_results = {iteration_count: [] for iteration_count in ITERATION_LIST}
-    llr_snapshot_by_iteration = {iteration_count: None for iteration_count in ITERATION_LIST}
-
-    for ebn0_decibels in EBN0_DECIBELS:
-        noise_variance = compute_noise_variance_from_ebn0(ebn0_decibels, CODE_RATE)
+    for ebn0_db in LDPC_EB_NO_DB:
+        noise_variance = noise_variance_from_ebn0(ebn0_db, CODE_RATE)
         noise_standard_deviation = np.sqrt(noise_variance)
 
-        bit_errors_by_iteration = {iteration_count: 0 for iteration_count in ITERATION_LIST}
-        processed_information_bits = 0
-        processed_frames = 0
+        bit_errors = {iteration_count: 0 for iteration_count in DECODER_ITERATION_LIST}
+        transmitted_information_bits = 0
+        frame_count = 0
 
         while (
-            processed_frames < MINIMUM_FRAME_COUNT
+            frame_count < MINIMUM_FRAME_COUNT
             or (
-                bit_errors_by_iteration[max(ITERATION_LIST)] < TARGET_ERROR_COUNT
-                and processed_frames < MAXIMUM_FRAME_COUNT
+                bit_errors[max(DECODER_ITERATION_LIST)] < TARGET_ERROR_COUNT
+                and frame_count < MAXIMUM_FRAME_COUNT
             )
         ):
             information_bits = random_generator.integers(
                 0, 2, INFORMATION_BIT_COUNT, dtype=np.int8
             )
 
-            codeword_bits = encode_information_bits(information_bits)
-            if not verify_codeword(codeword_bits):
-                raise RuntimeError("Encoder produced a vector that does not satisfy Hc^T = 0.")
+            codeword = encode_information_bits(information_bits)
 
-            transmitted_symbols = map_bits_to_bpsk_symbols(codeword_bits)
-            received_samples = transmitted_symbols + noise_standard_deviation * random_generator.standard_normal(
-                len(transmitted_symbols)
+            transmitted_symbols = 1.0 - 2.0 * codeword
+            received_symbols = transmitted_symbols + noise_standard_deviation * random_generator.standard_normal(codeword_length)
+
+            _, posterior_llr_history = decode_codeword_with_layered_min_sum(
+                received_symbols=received_symbols,
+                noise_variance=noise_variance,
+                iteration_count=max(DECODER_ITERATION_LIST),
             )
 
-            _, posterior_llr_history = decode_codeword(
-                received_samples,
-                noise_variance,
-                max(ITERATION_LIST),
-            )
+            for iteration_count in DECODER_ITERATION_LIST:
+                information_llr = posterior_llr_history[iteration_count - 1][:INFORMATION_BIT_COUNT]
+                hard_information_bits = (information_llr < 0.0).astype(np.int8)
+                bit_errors[iteration_count] += int(np.sum(information_bits != hard_information_bits))
 
-            for iteration_count in ITERATION_LIST:
-                hard_information_bits = (
-                    posterior_llr_history[iteration_count - 1][:INFORMATION_BIT_COUNT] < 0.0
-                ).astype(np.int8)
-                bit_errors_by_iteration[iteration_count] += int(
-                    np.sum(information_bits != hard_information_bits)
-                )
+            if ebn0_db == LDPC_EB_NO_DB[-1] and frame_count == 0:
+                for iteration_count in DECODER_ITERATION_LIST:
+                    llr_snapshot[iteration_count] = posterior_llr_history[iteration_count - 1][:20].copy()
 
-            if ebn0_decibels == EBN0_DECIBELS[-1] and processed_frames == 0:
-                for iteration_count in ITERATION_LIST:
-                    llr_snapshot_by_iteration[iteration_count] = posterior_llr_history[
-                        iteration_count - 1
-                    ][:20].copy()
+            transmitted_information_bits += INFORMATION_BIT_COUNT
+            frame_count += 1
 
-            processed_information_bits += INFORMATION_BIT_COUNT
-            processed_frames += 1
-
-        for iteration_count in ITERATION_LIST:
-            bit_error_rate_results[iteration_count].append(
-                bit_errors_by_iteration[iteration_count] / processed_information_bits
-            )
+        for iteration_count in DECODER_ITERATION_LIST:
+            ber_value = bit_errors[iteration_count] / transmitted_information_bits
+            ber_by_iteration[iteration_count].append(ber_value)
 
         print(
-            "LDPC Eb/N0={:4.2f} dB frames={} ".format(ebn0_decibels, processed_frames)
+            "ldpc Eb/N0={:4.2f} dB frames={} ".format(ebn0_db, frame_count)
             + ", ".join(
                 [
-                    f"iteration {iteration_count}={bit_error_rate_results[iteration_count][-1]:.4e}"
-                    for iteration_count in ITERATION_LIST
+                    "it{}={:.4e}".format(
+                        iteration_count,
+                        ber_by_iteration[iteration_count][-1],
+                    )
+                    for iteration_count in DECODER_ITERATION_LIST
                 ]
             )
         )
 
-    for iteration_count in ITERATION_LIST:
-        bit_error_rate_results[iteration_count] = np.array(
-            bit_error_rate_results[iteration_count], dtype=float
+    for iteration_count in DECODER_ITERATION_LIST:
+        ber_by_iteration[iteration_count] = np.array(
+            ber_by_iteration[iteration_count], dtype=float
         )
 
-    return bit_error_rate_results, llr_snapshot_by_iteration
+    return ber_by_iteration, llr_snapshot
