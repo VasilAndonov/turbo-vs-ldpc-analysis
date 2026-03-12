@@ -1,9 +1,4 @@
-"""
-Main entry point for the multi-rate turbo-code project.
-"""
-
 import time
-
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.special import erfc
@@ -18,7 +13,6 @@ from config import (
     get_rate_label,
 )
 from simulation import run_convolutional_simulation, run_turbo_simulation
-
 
 def plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot):
     floor_value = 1e-8
@@ -69,7 +63,6 @@ def plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot):
         plt.savefig(f"{SAVE_PREFIX}_llr_{get_rate_label().replace('/', '_')}.png", dpi=170)
     plt.show()
 
-
 def main():
     random_generator = np.random.default_rng(RANDOM_SEED)
     start_time = time.time()
@@ -79,7 +72,6 @@ def main():
     plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot)
 
     print(f"Turbo simulation finished in {time.time() - start_time:.2f} seconds")
-
 
 if __name__ == "__main__":
     main()
