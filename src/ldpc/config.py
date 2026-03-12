@@ -1,8 +1,5 @@
 """
 Multi-rate LDPC configuration.
-
-Change SELECTED_CODE_RATE to one of the supported rates and rerun the project.
-The parity-check matrix and codeword length are rebuilt automatically.
 """
 
 import numpy as np
