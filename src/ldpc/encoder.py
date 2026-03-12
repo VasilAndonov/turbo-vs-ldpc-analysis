@@ -1,12 +1,5 @@
 """
 LDPC encoder and graph construction.
-
-The parity-check matrix is built as H = [A | B] where:
-- A is sparse and pseudo-random,
-- B is lower triangular and invertible over GF(2).
-
-This keeps encoding systematic and practical while remaining comparable across
-several code rates.
 """
 
 import numpy as np
@@ -19,14 +12,7 @@ from config import (
     get_information_column_weight,
 )
 
-
 def build_information_connection_matrix():
-    """
-    Build the sparse left side A of the parity-check matrix.
-
-    The row-selection heuristic spreads edges more evenly and reduces repeated
-    row pairs, which tends to reduce the number of short harmful cycles.
-    """
     random_generator = np.random.default_rng(RANDOM_SEED)
     information_column_weight = get_information_column_weight()
 
@@ -35,10 +21,7 @@ def build_information_connection_matrix():
             f"Column weight {information_column_weight} is too large for {PARITY_BIT_COUNT} parity checks."
         )
 
-    information_connection_matrix = np.zeros(
-        (PARITY_BIT_COUNT, INFORMATION_BIT_COUNT), dtype=np.int8
-    )
-
+    information_connection_matrix = np.zeros((PARITY_BIT_COUNT, INFORMATION_BIT_COUNT), dtype=np.int8)
     row_weights = np.zeros(PARITY_BIT_COUNT, dtype=int)
     used_row_pairs = np.zeros((PARITY_BIT_COUNT, PARITY_BIT_COUNT), dtype=np.int16)
 
@@ -86,15 +69,7 @@ def build_information_connection_matrix():
 
 
 def build_parity_connection_matrix():
-    """
-    Build the right side B of the parity-check matrix.
-
-    B is lower triangular with a guaranteed diagonal of ones. Additional nearby
-    lower-diagonal entries increase parity-node degree and improve decoding.
-    """
-    parity_connection_matrix = np.zeros(
-        (PARITY_BIT_COUNT, PARITY_BIT_COUNT), dtype=np.int8
-    )
+    parity_connection_matrix = np.zeros((PARITY_BIT_COUNT, PARITY_BIT_COUNT), dtype=np.int8)
 
     for row_index in range(PARITY_BIT_COUNT):
         parity_connection_matrix[row_index, row_index] = 1
@@ -109,73 +84,45 @@ def build_parity_connection_matrix():
 def build_parity_check_matrix():
     information_connection_matrix = build_information_connection_matrix()
     parity_connection_matrix = build_parity_connection_matrix()
-    parity_check_matrix = np.concatenate(
-        [information_connection_matrix, parity_connection_matrix], axis=1
-    )
+    parity_check_matrix = np.concatenate([information_connection_matrix, parity_connection_matrix], axis=1)
     return parity_check_matrix, information_connection_matrix, parity_connection_matrix
 
 
-PARITY_CHECK_MATRIX, INFORMATION_CONNECTION_MATRIX, PARITY_CONNECTION_MATRIX = (
-    build_parity_check_matrix()
-)
+PARITY_CHECK_MATRIX, INFORMATION_CONNECTION_MATRIX, PARITY_CONNECTION_MATRIX = build_parity_check_matrix()
 
 
 def build_graph_from_parity_check_matrix(parity_check_matrix):
-    """
-    Convert H into Tanner-graph adjacency lists.
-    """
     check_to_variable_neighbors = []
     variable_to_check_neighbors = [[] for _ in range(parity_check_matrix.shape[1])]
 
     for check_index in range(parity_check_matrix.shape[0]):
         variable_indices = list(np.where(parity_check_matrix[check_index] == 1)[0])
         check_to_variable_neighbors.append(variable_indices)
-
         for variable_index in variable_indices:
             variable_to_check_neighbors[variable_index].append(check_index)
 
     return check_to_variable_neighbors, variable_to_check_neighbors
 
 
-CHECK_TO_VARIABLE_NEIGHBORS, VARIABLE_TO_CHECK_NEIGHBORS = (
-    build_graph_from_parity_check_matrix(PARITY_CHECK_MATRIX)
-)
+CHECK_TO_VARIABLE_NEIGHBORS, VARIABLE_TO_CHECK_NEIGHBORS = build_graph_from_parity_check_matrix(PARITY_CHECK_MATRIX)
 
 
 def solve_lower_triangular_binary_system(lower_triangular_matrix, right_hand_side):
-    """
-    Solve B p = s over GF(2) using forward substitution.
-    """
     system_size = len(right_hand_side)
     solution = np.zeros(system_size, dtype=np.int8)
 
     for row_index in range(system_size):
         value = int(right_hand_side[row_index])
-
         for column_index in range(row_index):
             if lower_triangular_matrix[row_index, column_index]:
                 value ^= int(solution[column_index])
-
         solution[row_index] = value
 
     return solution
 
 
 def encode_information_bits(information_bits):
-    """
-    Systematic LDPC encoding.
-
-    If H = [A | B] and codeword c = [u | p], then:
-        A u + B p = 0 (mod 2)
-    so:
-        B p = A u (mod 2)
-    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
-
     syndrome_from_information = (INFORMATION_CONNECTION_MATRIX @ information_bits) % 2
-    parity_bits = solve_lower_triangular_binary_system(
-        PARITY_CONNECTION_MATRIX,
-        syndrome_from_information,
-    )
-
+    parity_bits = solve_lower_triangular_binary_system(PARITY_CONNECTION_MATRIX, syndrome_from_information)
     return np.concatenate([information_bits, parity_bits]).astype(np.int8)
