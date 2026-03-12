@@ -50,8 +50,7 @@ def build_information_connection_matrix():
                 elif score == best_score:
                     best_row_candidates.append(row_index)
 
-            chosen_row = int(random_generator.choice(best_row_candidates))
-            chosen_rows.append(chosen_row)
+            chosen_rows.append(int(random_generator.choice(best_row_candidates)))
 
         chosen_rows.sort()
 
@@ -61,12 +60,9 @@ def build_information_connection_matrix():
 
         for first_index in range(len(chosen_rows)):
             for second_index in range(first_index + 1, len(chosen_rows)):
-                row_a = chosen_rows[first_index]
-                row_b = chosen_rows[second_index]
-                used_row_pairs[row_a, row_b] += 1
+                used_row_pairs[chosen_rows[first_index], chosen_rows[second_index]] += 1
 
     return information_connection_matrix
-
 
 def build_parity_connection_matrix():
     parity_connection_matrix = np.zeros((PARITY_BIT_COUNT, PARITY_BIT_COUNT), dtype=np.int8)
@@ -80,16 +76,13 @@ def build_parity_connection_matrix():
 
     return parity_connection_matrix
 
-
 def build_parity_check_matrix():
     information_connection_matrix = build_information_connection_matrix()
     parity_connection_matrix = build_parity_connection_matrix()
     parity_check_matrix = np.concatenate([information_connection_matrix, parity_connection_matrix], axis=1)
     return parity_check_matrix, information_connection_matrix, parity_connection_matrix
 
-
 PARITY_CHECK_MATRIX, INFORMATION_CONNECTION_MATRIX, PARITY_CONNECTION_MATRIX = build_parity_check_matrix()
-
 
 def build_graph_from_parity_check_matrix(parity_check_matrix):
     check_to_variable_neighbors = []
@@ -103,9 +96,7 @@ def build_graph_from_parity_check_matrix(parity_check_matrix):
 
     return check_to_variable_neighbors, variable_to_check_neighbors
 
-
 CHECK_TO_VARIABLE_NEIGHBORS, VARIABLE_TO_CHECK_NEIGHBORS = build_graph_from_parity_check_matrix(PARITY_CHECK_MATRIX)
-
 
 def solve_lower_triangular_binary_system(lower_triangular_matrix, right_hand_side):
     system_size = len(right_hand_side)
@@ -119,7 +110,6 @@ def solve_lower_triangular_binary_system(lower_triangular_matrix, right_hand_sid
         solution[row_index] = value
 
     return solution
-
 
 def encode_information_bits(information_bits):
     information_bits = np.asarray(information_bits, dtype=np.int8)
