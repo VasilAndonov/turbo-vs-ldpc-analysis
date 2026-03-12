@@ -1,164 +1,204 @@
-"""Encoder-side functions for the turbo-code simulation.
+"""
+Turbo encoder utilities.
 
-This module contains two encoder families:
-1. A terminated rate-1/2 convolutional encoder with generator pair (7,5) in octal.
-2. A terminated recursive systematic convolutional encoder used inside the turbo code.
-
-The turbo encoder is built from two identical recursive systematic encoders separated by a
-random interleaver.
+This file provides:
+1) the recursive systematic convolutional constituent trellis,
+2) the terminated constituent encoder,
+3) puncturing helpers for multi-rate turbo transmission,
+4) a conventional rate-1/2 convolutional encoder for the baseline curve.
 """
 
 import numpy as np
 
-from config import ENCODER_MEMORY, NUMBER_OF_TAIL_BITS, NUMBER_OF_STATES
+from config import (
+    INFORMATION_BLOCK_LENGTH,
+    RANDOM_SEED,
+    RSC_MEMORY,
+    RSC_STATE_COUNT,
+    RSC_TAIL_LENGTH,
+    get_puncture_definition,
+)
 
 
-# --------------------------------------------------------------------------------------
-# Recursive systematic convolutional trellis tables
-# --------------------------------------------------------------------------------------
-# These tables fully describe the constituent encoder used by the turbo code.
-# Feedback polynomial: 101
-# Feedforward polynomial: 111
-# The signs are stored in BPSK form so the decoder can evaluate branch metrics directly.
+def build_rsc_tables():
+    """
+    Build state transition and parity tables for a 4-state RSC code.
 
-def build_recursive_systematic_tables():
-    next_state_table = np.zeros((NUMBER_OF_STATES, 2), dtype=int)
-    parity_bit_table = np.zeros((NUMBER_OF_STATES, 2), dtype=int)
-    information_bit_sign_table = np.zeros((NUMBER_OF_STATES, 2), dtype=float)
-    parity_bit_sign_table = np.zeros((NUMBER_OF_STATES, 2), dtype=float)
-    predecessor_state_table = [[] for _ in range(NUMBER_OF_STATES)]
-    successor_state_table = [[] for _ in range(NUMBER_OF_STATES)]
+    Feedback polynomial: 101
+    Feedforward polynomial: 111
+    """
+    next_state = np.zeros((RSC_STATE_COUNT, 2), dtype=int)
+    parity_bit = np.zeros((RSC_STATE_COUNT, 2), dtype=int)
+    input_sign = np.zeros((RSC_STATE_COUNT, 2), dtype=float)
+    parity_sign = np.zeros((RSC_STATE_COUNT, 2), dtype=float)
+    predecessor_list = [[] for _ in range(RSC_STATE_COUNT)]
+    successor_list = [[] for _ in range(RSC_STATE_COUNT)]
 
-    for state_index in range(NUMBER_OF_STATES):
-        oldest_memory_bit = (state_index >> 1) & 1
-        newest_memory_bit = state_index & 1
+    for state in range(RSC_STATE_COUNT):
+        register_bit_0 = (state >> 1) & 1
+        register_bit_1 = state & 1
 
-        for input_bit in (0, 1):
-            recursive_input_bit = input_bit ^ newest_memory_bit
-            parity_bit = recursive_input_bit ^ oldest_memory_bit ^ newest_memory_bit
+        for information_bit in (0, 1):
+            recursive_bit = information_bit ^ register_bit_1
+            parity = recursive_bit ^ register_bit_0 ^ register_bit_1
 
-            next_oldest_memory_bit = recursive_input_bit
-            next_newest_memory_bit = oldest_memory_bit
-            next_state_index = (next_oldest_memory_bit << 1) | next_newest_memory_bit
+            next_register_bit_0 = recursive_bit
+            next_register_bit_1 = register_bit_0
+            next_state_value = (next_register_bit_0 << 1) | next_register_bit_1
 
-            next_state_table[state_index, input_bit] = next_state_index
-            parity_bit_table[state_index, input_bit] = parity_bit
-            information_bit_sign_table[state_index, input_bit] = 1.0 if input_bit == 0 else -1.0
-            parity_bit_sign_table[state_index, input_bit] = 1.0 if parity_bit == 0 else -1.0
+            next_state[state, information_bit] = next_state_value
+            parity_bit[state, information_bit] = parity
+            input_sign[state, information_bit] = 1.0 if information_bit == 0 else -1.0
+            parity_sign[state, information_bit] = 1.0 if parity == 0 else -1.0
 
-            predecessor_state_table[next_state_index].append((state_index, input_bit))
-            successor_state_table[state_index].append((next_state_index, input_bit))
+            predecessor_list[next_state_value].append((state, information_bit))
+            successor_list[state].append((next_state_value, information_bit))
 
-    return (
-        next_state_table,
-        parity_bit_table,
-        information_bit_sign_table,
-        parity_bit_sign_table,
-        predecessor_state_table,
-        successor_state_table,
-    )
+    return next_state, parity_bit, input_sign, parity_sign, predecessor_list, successor_list
 
 
 (
-    NEXT_STATE_TABLE,
-    PARITY_BIT_TABLE,
-    INFORMATION_BIT_SIGN_TABLE,
-    PARITY_BIT_SIGN_TABLE,
-    PREDECESSOR_STATE_TABLE,
-    SUCCESSOR_STATE_TABLE,
-) = build_recursive_systematic_tables()
+    NEXT_STATE,
+    PARITY_BIT,
+    INPUT_SIGN,
+    PARITY_SIGN,
+    PREDECESSOR_LIST,
+    SUCCESSOR_LIST,
+) = build_rsc_tables()
 
 
-# --------------------------------------------------------------------------------------
-# Tail-bit generation for the constituent encoder
-# --------------------------------------------------------------------------------------
-# After all information bits are processed, these extra bits drive the encoder back to the
-# all-zero state. This makes the trellis termination explicit and helps the decoder.
-
-def compute_tail_bits(current_state):
-    tail_bit_list = []
-    state_index = current_state
-
-    for _ in range(NUMBER_OF_TAIL_BITS):
-        newest_memory_bit = state_index & 1
-        input_bit = newest_memory_bit
-        tail_bit_list.append(input_bit)
-        state_index = NEXT_STATE_TABLE[state_index, input_bit]
-
-    return tail_bit_list
+def build_interleaver():
+    random_generator = np.random.default_rng(RANDOM_SEED)
+    permutation = random_generator.permutation(INFORMATION_BLOCK_LENGTH)
+    inverse_permutation = np.argsort(permutation)
+    return permutation.astype(np.int64), inverse_permutation.astype(np.int64)
 
 
-# --------------------------------------------------------------------------------------
-# Terminated recursive systematic encoder
-# --------------------------------------------------------------------------------------
-# The output contains the systematic stream and one parity stream. Tail bits are appended
-# to both streams so the final state is zero.
+INTERLEAVER, DEINTERLEAVER = build_interleaver()
 
-def encode_recursive_systematic_terminated(information_bits):
+
+def tail_bits_for_zero_termination(current_state):
+    """
+    Compute the input bits that drive the RSC encoder back to the zero state.
+    """
+    tail_sequence = []
+    state = int(current_state)
+
+    for _ in range(RSC_TAIL_LENGTH):
+        register_bit_1 = state & 1
+        information_bit = register_bit_1
+        tail_sequence.append(information_bit)
+        state = NEXT_STATE[state, information_bit]
+
+    return tail_sequence
+
+
+def encode_rsc_terminated(information_bits):
+    """
+    Encode one input block with terminated RSC encoding.
+
+    Returns:
+    - systematic_bits
+    - parity_bits
+    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
 
-    systematic_output_bits = []
-    parity_output_bits = []
-    state_index = 0
+    systematic_bits = []
+    parity_bits = []
+    state = 0
 
-    for information_bit in information_bits:
-        systematic_output_bits.append(int(information_bit))
-        parity_output_bits.append(PARITY_BIT_TABLE[state_index, information_bit])
-        state_index = NEXT_STATE_TABLE[state_index, information_bit]
+    for bit_value in information_bits:
+        bit_value = int(bit_value)
+        systematic_bits.append(bit_value)
+        parity_bits.append(PARITY_BIT[state, bit_value])
+        state = NEXT_STATE[state, bit_value]
 
-    tail_bit_list = compute_tail_bits(state_index)
-    for tail_bit in tail_bit_list:
-        systematic_output_bits.append(int(tail_bit))
-        parity_output_bits.append(PARITY_BIT_TABLE[state_index, tail_bit])
-        state_index = NEXT_STATE_TABLE[state_index, tail_bit]
+    tail_sequence = tail_bits_for_zero_termination(state)
+    for bit_value in tail_sequence:
+        systematic_bits.append(int(bit_value))
+        parity_bits.append(PARITY_BIT[state, bit_value])
+        state = NEXT_STATE[state, bit_value]
 
-    return np.array(systematic_output_bits, dtype=np.int8), np.array(parity_output_bits, dtype=np.int8)
+    return np.array(systematic_bits, dtype=np.int8), np.array(parity_bits, dtype=np.int8)
 
 
-# --------------------------------------------------------------------------------------
-# Turbo encoder
-# --------------------------------------------------------------------------------------
-# The turbo encoder uses two identical constituent encoders. The first sees the original
-# information sequence and the second sees an interleaved version of the same sequence.
-
-def turbo_encode(information_bits, interleaver_pattern):
+def turbo_encode_full_streams(information_bits):
+    """
+    Generate the full systematic and parity streams before puncturing.
+    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
 
-    first_systematic_stream, first_parity_stream = encode_recursive_systematic_terminated(information_bits)
+    systematic_stream_1, parity_stream_1 = encode_rsc_terminated(information_bits)
+    interleaved_information_bits = information_bits[INTERLEAVER]
+    systematic_stream_2, parity_stream_2 = encode_rsc_terminated(interleaved_information_bits)
 
-    interleaved_information_bits = information_bits[interleaver_pattern]
-    second_systematic_stream, second_parity_stream = encode_recursive_systematic_terminated(interleaved_information_bits)
-
-    return (
-        first_systematic_stream,
-        first_parity_stream,
-        second_systematic_stream,
-        second_parity_stream,
-    )
+    return systematic_stream_1, parity_stream_1, systematic_stream_2, parity_stream_2
 
 
-# --------------------------------------------------------------------------------------
-# Baseline convolutional encoder with generators (7,5)
-# --------------------------------------------------------------------------------------
-# This encoder is used only for the comparison curve against the turbo code.
-# It appends ENCODER_MEMORY zeros to terminate the trellis.
+def build_puncture_mask(total_length):
+    """
+    Build repeated keep masks for the two parity streams.
+    """
+    puncture_definition = get_puncture_definition()
+    pattern_1 = puncture_definition["parity_1_pattern"]
+    pattern_2 = puncture_definition["parity_2_pattern"]
+
+    parity_keep_mask_1 = np.resize(pattern_1, total_length).astype(np.int8)
+    parity_keep_mask_2 = np.resize(pattern_2, total_length).astype(np.int8)
+    return parity_keep_mask_1, parity_keep_mask_2
+
+
+def turbo_encode_transmitted_symbols(information_bits):
+    """
+    Return the transmitted turbo streams after puncturing.
+
+    The decoder can reconstruct punctured positions by inserting zero LLR.
+    """
+    systematic_stream_1, parity_stream_1, systematic_stream_2, parity_stream_2 = turbo_encode_full_streams(information_bits)
+    total_length = len(systematic_stream_1)
+    parity_keep_mask_1, parity_keep_mask_2 = build_puncture_mask(total_length)
+
+    transmitted_parity_stream_1 = parity_stream_1[parity_keep_mask_1 == 1]
+    transmitted_parity_stream_2 = parity_stream_2[parity_keep_mask_2 == 1]
+
+    return {
+        "systematic_stream_1": systematic_stream_1,
+        "parity_stream_1_full": parity_stream_1,
+        "parity_stream_2_full": parity_stream_2,
+        "transmitted_parity_stream_1": transmitted_parity_stream_1,
+        "transmitted_parity_stream_2": transmitted_parity_stream_2,
+        "parity_keep_mask_1": parity_keep_mask_1,
+        "parity_keep_mask_2": parity_keep_mask_2,
+    }
+
+
+def depuncture_received_parity(transmitted_received_values, keep_mask):
+    """
+    Reinsert punctured positions as zero-valued channel samples.
+    """
+    depunctured_values = np.zeros(len(keep_mask), dtype=float)
+    depunctured_values[keep_mask == 1] = np.asarray(transmitted_received_values, dtype=float)
+    return depunctured_values
+
 
 def encode_convolutional_75(information_bits):
+    """
+    Conventional non-recursive rate-1/2 convolutional encoder with generators (7,5).
+    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
-    terminated_information_bits = np.concatenate(
-        [information_bits, np.zeros(ENCODER_MEMORY, dtype=np.int8)]
-    )
+    information_bits = np.concatenate([information_bits, np.zeros(RSC_MEMORY, dtype=np.int8)])
 
-    first_memory_bit = 0
-    second_memory_bit = 0
-    coded_bit_list = []
+    register_bit_0 = 0
+    register_bit_1 = 0
+    encoded_bits = []
 
-    for input_bit in terminated_information_bits:
-        first_output_bit = input_bit ^ first_memory_bit ^ second_memory_bit
-        second_output_bit = input_bit ^ second_memory_bit
-        coded_bit_list.extend((first_output_bit, second_output_bit))
+    for input_bit in information_bits:
+        input_bit = int(input_bit)
+        output_0 = input_bit ^ register_bit_0 ^ register_bit_1
+        output_1 = input_bit ^ register_bit_1
+        encoded_bits.extend((output_0, output_1))
 
-        second_memory_bit = first_memory_bit
-        first_memory_bit = int(input_bit)
+        register_bit_1 = register_bit_0
+        register_bit_0 = input_bit
 
-    return np.array(coded_bit_list, dtype=np.int8)
+    return np.array(encoded_bits, dtype=np.int8)
