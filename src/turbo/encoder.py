@@ -10,7 +10,7 @@ from config import (
     RSC_MEMORY,
     RSC_STATE_COUNT,
     RSC_TAIL_LENGTH,
-    get_puncture_definition,
+    get_information_puncture_definition,
 )
 
 def build_rsc_tables():
@@ -28,7 +28,6 @@ def build_rsc_tables():
         for information_bit in (0, 1):
             recursive_bit = information_bit ^ register_bit_1
             parity = recursive_bit ^ register_bit_0 ^ register_bit_1
-
             next_register_bit_0 = recursive_bit
             next_register_bit_1 = register_bit_0
             next_state_value = (next_register_bit_0 << 1) | next_register_bit_1
@@ -43,7 +42,6 @@ def build_rsc_tables():
 
     return next_state, parity_bit, input_sign, parity_sign, predecessor_list, successor_list
 
-
 (
     NEXT_STATE,
     PARITY_BIT,
@@ -53,16 +51,13 @@ def build_rsc_tables():
     SUCCESSOR_LIST,
 ) = build_rsc_tables()
 
-
 def build_interleaver():
     random_generator = np.random.default_rng(RANDOM_SEED)
     permutation = random_generator.permutation(INFORMATION_BLOCK_LENGTH)
     inverse_permutation = np.argsort(permutation)
     return permutation.astype(np.int64), inverse_permutation.astype(np.int64)
 
-
 INTERLEAVER, DEINTERLEAVER = build_interleaver()
-
 
 def tail_bits_for_zero_termination(current_state):
     tail_sequence = []
@@ -75,7 +70,6 @@ def tail_bits_for_zero_termination(current_state):
         state = NEXT_STATE[state, information_bit]
 
     return tail_sequence
-
 
 def encode_rsc_terminated(information_bits):
     information_bits = np.asarray(information_bits, dtype=np.int8)
@@ -98,51 +92,47 @@ def encode_rsc_terminated(information_bits):
 
     return np.array(systematic_bits, dtype=np.int8), np.array(parity_bits, dtype=np.int8)
 
-
 def turbo_encode_full_streams(information_bits):
     information_bits = np.asarray(information_bits, dtype=np.int8)
-
     systematic_stream_1, parity_stream_1 = encode_rsc_terminated(information_bits)
     interleaved_information_bits = information_bits[INTERLEAVER]
     systematic_stream_2, parity_stream_2 = encode_rsc_terminated(interleaved_information_bits)
-
     return systematic_stream_1, parity_stream_1, systematic_stream_2, parity_stream_2
 
-
 def build_puncture_mask(total_length):
-    puncture_definition = get_puncture_definition()
+    puncture_definition = get_information_puncture_definition()
     pattern_1 = puncture_definition["parity_1_pattern"]
     pattern_2 = puncture_definition["parity_2_pattern"]
 
-    parity_keep_mask_1 = np.resize(pattern_1, total_length).astype(np.int8)
-    parity_keep_mask_2 = np.resize(pattern_2, total_length).astype(np.int8)
+    parity_keep_mask_1 = np.ones(total_length, dtype=np.int8)
+    parity_keep_mask_2 = np.ones(total_length, dtype=np.int8)
+    parity_keep_mask_1[:INFORMATION_BLOCK_LENGTH] = np.resize(pattern_1, INFORMATION_BLOCK_LENGTH).astype(np.int8)
+    parity_keep_mask_2[:INFORMATION_BLOCK_LENGTH] = np.resize(pattern_2, INFORMATION_BLOCK_LENGTH).astype(np.int8)
     return parity_keep_mask_1, parity_keep_mask_2
-
 
 def turbo_encode_transmitted_symbols(information_bits):
     systematic_stream_1, parity_stream_1, systematic_stream_2, parity_stream_2 = turbo_encode_full_streams(information_bits)
     total_length = len(systematic_stream_1)
     parity_keep_mask_1, parity_keep_mask_2 = build_puncture_mask(total_length)
 
-    transmitted_parity_stream_1 = parity_stream_1[parity_keep_mask_1 == 1]
-    transmitted_parity_stream_2 = parity_stream_2[parity_keep_mask_2 == 1]
-
     return {
         "systematic_stream_1": systematic_stream_1,
         "parity_stream_1_full": parity_stream_1,
         "parity_stream_2_full": parity_stream_2,
-        "transmitted_parity_stream_1": transmitted_parity_stream_1,
-        "transmitted_parity_stream_2": transmitted_parity_stream_2,
+        "transmitted_parity_stream_1": parity_stream_1[parity_keep_mask_1 == 1],
+        "transmitted_parity_stream_2": parity_stream_2[parity_keep_mask_2 == 1],
         "parity_keep_mask_1": parity_keep_mask_1,
         "parity_keep_mask_2": parity_keep_mask_2,
     }
-
 
 def depuncture_received_parity(transmitted_received_values, keep_mask):
     depunctured_values = np.zeros(len(keep_mask), dtype=float)
     depunctured_values[keep_mask == 1] = np.asarray(transmitted_received_values, dtype=float)
     return depunctured_values
 
+def count_transmitted_symbols(parity_keep_mask_1, parity_keep_mask_2):
+    total_length = len(parity_keep_mask_1)
+    return total_length + int(np.sum(parity_keep_mask_1)) + int(np.sum(parity_keep_mask_2))
 
 def encode_convolutional_75(information_bits):
     information_bits = np.asarray(information_bits, dtype=np.int8)
@@ -157,7 +147,6 @@ def encode_convolutional_75(information_bits):
         output_0 = input_bit ^ register_bit_0 ^ register_bit_1
         output_1 = input_bit ^ register_bit_1
         encoded_bits.extend((output_0, output_1))
-
         register_bit_1 = register_bit_0
         register_bit_0 = input_bit
 
