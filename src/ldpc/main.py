@@ -23,7 +23,6 @@ def plot_results(ber_by_iteration, llr_snapshot):
             marker="o",
             label=f"Iteration {iteration_count}",
         )
-
     plt.xlabel("Eb/N0 (dB)")
     plt.ylabel("Bit error rate")
     plt.title(f"LDPC BER, rate {get_rate_label()}")
@@ -38,7 +37,6 @@ def plot_results(ber_by_iteration, llr_snapshot):
     for iteration_count in DECODER_ITERATION_LIST:
         if llr_snapshot[iteration_count] is not None:
             plt.scatter(range(len(llr_snapshot[iteration_count])), llr_snapshot[iteration_count], s=18, label=f"Iteration {iteration_count}")
-
     plt.xlabel("Bit index")
     plt.ylabel("Posterior LLR")
     plt.title(f"LDPC decoder confidence growth, rate {get_rate_label()}")
@@ -52,10 +50,8 @@ def plot_results(ber_by_iteration, llr_snapshot):
 def main():
     random_generator = np.random.default_rng(RANDOM_SEED)
     start_time = time.time()
-
     ber_by_iteration, llr_snapshot = run_ldpc_simulation(random_generator)
     plot_results(ber_by_iteration, llr_snapshot)
-
     print(f"LDPC simulation finished in {time.time() - start_time:.2f} seconds")
 
 if __name__ == "__main__":
