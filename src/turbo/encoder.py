@@ -1,11 +1,5 @@
 """
 Turbo encoder utilities.
-
-This file provides:
-1) the recursive systematic convolutional constituent trellis,
-2) the terminated constituent encoder,
-3) puncturing helpers for multi-rate turbo transmission,
-4) a conventional rate-1/2 convolutional encoder for the baseline curve.
 """
 
 import numpy as np
@@ -19,14 +13,7 @@ from config import (
     get_puncture_definition,
 )
 
-
 def build_rsc_tables():
-    """
-    Build state transition and parity tables for a 4-state RSC code.
-
-    Feedback polynomial: 101
-    Feedforward polynomial: 111
-    """
     next_state = np.zeros((RSC_STATE_COUNT, 2), dtype=int)
     parity_bit = np.zeros((RSC_STATE_COUNT, 2), dtype=int)
     input_sign = np.zeros((RSC_STATE_COUNT, 2), dtype=float)
@@ -78,9 +65,6 @@ INTERLEAVER, DEINTERLEAVER = build_interleaver()
 
 
 def tail_bits_for_zero_termination(current_state):
-    """
-    Compute the input bits that drive the RSC encoder back to the zero state.
-    """
     tail_sequence = []
     state = int(current_state)
 
@@ -94,13 +78,6 @@ def tail_bits_for_zero_termination(current_state):
 
 
 def encode_rsc_terminated(information_bits):
-    """
-    Encode one input block with terminated RSC encoding.
-
-    Returns:
-    - systematic_bits
-    - parity_bits
-    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
 
     systematic_bits = []
@@ -123,9 +100,6 @@ def encode_rsc_terminated(information_bits):
 
 
 def turbo_encode_full_streams(information_bits):
-    """
-    Generate the full systematic and parity streams before puncturing.
-    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
 
     systematic_stream_1, parity_stream_1 = encode_rsc_terminated(information_bits)
@@ -136,9 +110,6 @@ def turbo_encode_full_streams(information_bits):
 
 
 def build_puncture_mask(total_length):
-    """
-    Build repeated keep masks for the two parity streams.
-    """
     puncture_definition = get_puncture_definition()
     pattern_1 = puncture_definition["parity_1_pattern"]
     pattern_2 = puncture_definition["parity_2_pattern"]
@@ -149,11 +120,6 @@ def build_puncture_mask(total_length):
 
 
 def turbo_encode_transmitted_symbols(information_bits):
-    """
-    Return the transmitted turbo streams after puncturing.
-
-    The decoder can reconstruct punctured positions by inserting zero LLR.
-    """
     systematic_stream_1, parity_stream_1, systematic_stream_2, parity_stream_2 = turbo_encode_full_streams(information_bits)
     total_length = len(systematic_stream_1)
     parity_keep_mask_1, parity_keep_mask_2 = build_puncture_mask(total_length)
@@ -173,18 +139,12 @@ def turbo_encode_transmitted_symbols(information_bits):
 
 
 def depuncture_received_parity(transmitted_received_values, keep_mask):
-    """
-    Reinsert punctured positions as zero-valued channel samples.
-    """
     depunctured_values = np.zeros(len(keep_mask), dtype=float)
     depunctured_values[keep_mask == 1] = np.asarray(transmitted_received_values, dtype=float)
     return depunctured_values
 
 
 def encode_convolutional_75(information_bits):
-    """
-    Conventional non-recursive rate-1/2 convolutional encoder with generators (7,5).
-    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
     information_bits = np.concatenate([information_bits, np.zeros(RSC_MEMORY, dtype=np.int8)])
 
