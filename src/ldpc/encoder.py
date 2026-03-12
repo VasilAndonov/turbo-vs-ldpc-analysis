@@ -1,26 +1,39 @@
 """
-Encoder-side LDPC utilities.
+LDPC encoder and graph construction.
 
-This file contains three main parts:
-1) construction of a better parity-check matrix,
-2) graph utilities used by the decoder,
-3) systematic LDPC encoding.
+The parity-check matrix is built as H = [A | B] where:
+- A is sparse and pseudo-random,
+- B is lower triangular and invertible over GF(2).
+
+This keeps encoding systematic and practical while remaining comparable across
+several code rates.
 """
 
 import numpy as np
 
 from config import (
     INFORMATION_BIT_COUNT,
-    INFORMATION_COLUMN_WEIGHT,
     PARITY_BIT_COUNT,
     RANDOM_SEED,
     ROW_WEIGHT_PENALTY,
+    get_information_column_weight,
 )
 
 
 def build_information_connection_matrix():
-    """Create the sparse left side A of the parity-check matrix."""
+    """
+    Build the sparse left side A of the parity-check matrix.
+
+    The row-selection heuristic spreads edges more evenly and reduces repeated
+    row pairs, which tends to reduce the number of short harmful cycles.
+    """
     random_generator = np.random.default_rng(RANDOM_SEED)
+    information_column_weight = get_information_column_weight()
+
+    if information_column_weight > PARITY_BIT_COUNT:
+        raise ValueError(
+            f"Column weight {information_column_weight} is too large for {PARITY_BIT_COUNT} parity checks."
+        )
 
     information_connection_matrix = np.zeros(
         (PARITY_BIT_COUNT, INFORMATION_BIT_COUNT), dtype=np.int8
@@ -32,7 +45,7 @@ def build_information_connection_matrix():
     for column_index in range(INFORMATION_BIT_COUNT):
         chosen_rows = []
 
-        for _ in range(INFORMATION_COLUMN_WEIGHT):
+        for _ in range(information_column_weight):
             best_score = None
             best_row_candidates = []
 
@@ -54,8 +67,8 @@ def build_information_connection_matrix():
                 elif score == best_score:
                     best_row_candidates.append(row_index)
 
-            chosen_row = random_generator.choice(best_row_candidates)
-            chosen_rows.append(int(chosen_row))
+            chosen_row = int(random_generator.choice(best_row_candidates))
+            chosen_rows.append(chosen_row)
 
         chosen_rows.sort()
 
@@ -73,17 +86,20 @@ def build_information_connection_matrix():
 
 
 def build_parity_connection_matrix():
-    """Create the sparse right side B of the parity-check matrix."""
+    """
+    Build the right side B of the parity-check matrix.
+
+    B is lower triangular with a guaranteed diagonal of ones. Additional nearby
+    lower-diagonal entries increase parity-node degree and improve decoding.
+    """
     parity_connection_matrix = np.zeros(
         (PARITY_BIT_COUNT, PARITY_BIT_COUNT), dtype=np.int8
     )
 
     for row_index in range(PARITY_BIT_COUNT):
         parity_connection_matrix[row_index, row_index] = 1
-
         if row_index >= 1:
             parity_connection_matrix[row_index, row_index - 1] = 1
-
         if row_index >= 2 and row_index % 3 != 0:
             parity_connection_matrix[row_index, row_index - 2] = 1
 
@@ -93,7 +109,6 @@ def build_parity_connection_matrix():
 def build_parity_check_matrix():
     information_connection_matrix = build_information_connection_matrix()
     parity_connection_matrix = build_parity_connection_matrix()
-
     parity_check_matrix = np.concatenate(
         [information_connection_matrix, parity_connection_matrix], axis=1
     )
@@ -106,7 +121,9 @@ PARITY_CHECK_MATRIX, INFORMATION_CONNECTION_MATRIX, PARITY_CONNECTION_MATRIX = (
 
 
 def build_graph_from_parity_check_matrix(parity_check_matrix):
-    """Convert H into row-to-column and column-to-row adjacency lists."""
+    """
+    Convert H into Tanner-graph adjacency lists.
+    """
     check_to_variable_neighbors = []
     variable_to_check_neighbors = [[] for _ in range(parity_check_matrix.shape[1])]
 
@@ -126,11 +143,13 @@ CHECK_TO_VARIABLE_NEIGHBORS, VARIABLE_TO_CHECK_NEIGHBORS = (
 
 
 def solve_lower_triangular_binary_system(lower_triangular_matrix, right_hand_side):
-    """Solve B p = s over GF(2) by forward substitution."""
-    size = len(right_hand_side)
-    solution = np.zeros(size, dtype=np.int8)
+    """
+    Solve B p = s over GF(2) using forward substitution.
+    """
+    system_size = len(right_hand_side)
+    solution = np.zeros(system_size, dtype=np.int8)
 
-    for row_index in range(size):
+    for row_index in range(system_size):
         value = int(right_hand_side[row_index])
 
         for column_index in range(row_index):
@@ -143,15 +162,20 @@ def solve_lower_triangular_binary_system(lower_triangular_matrix, right_hand_sid
 
 
 def encode_information_bits(information_bits):
-    """Encode one information block into a systematic LDPC codeword."""
+    """
+    Systematic LDPC encoding.
+
+    If H = [A | B] and codeword c = [u | p], then:
+        A u + B p = 0 (mod 2)
+    so:
+        B p = A u (mod 2)
+    """
     information_bits = np.asarray(information_bits, dtype=np.int8)
 
-    syndrome_from_information = (
-        INFORMATION_CONNECTION_MATRIX @ information_bits
-    ) % 2
-
+    syndrome_from_information = (INFORMATION_CONNECTION_MATRIX @ information_bits) % 2
     parity_bits = solve_lower_triangular_binary_system(
-        PARITY_CONNECTION_MATRIX, syndrome_from_information
+        PARITY_CONNECTION_MATRIX,
+        syndrome_from_information,
     )
 
     return np.concatenate([information_bits, parity_bits]).astype(np.int8)
