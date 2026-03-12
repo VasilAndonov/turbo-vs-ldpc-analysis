@@ -17,11 +17,9 @@ from encoder import (
 def decode_viterbi_75(received_values, information_length):
     received_values = np.asarray(received_values, dtype=float)
     step_count = len(received_values) // 2
-
     path_metric = np.full((step_count + 1, RSC_STATE_COUNT), 1e30, dtype=float)
     predecessor_state = np.full((step_count + 1, RSC_STATE_COUNT), -1, dtype=int)
     predecessor_input = np.full((step_count + 1, RSC_STATE_COUNT), -1, dtype=int)
-
     path_metric[0, 0] = 0.0
 
     for step_index in range(step_count):
@@ -40,10 +38,8 @@ def decode_viterbi_75(received_values, information_length):
                 output_0 = information_bit ^ register_bit_0 ^ register_bit_1
                 output_1 = information_bit ^ register_bit_1
                 next_state = (information_bit << 1) | register_bit_0
-
                 expected_0 = 1.0 if output_0 == 0 else -1.0
                 expected_1 = 1.0 if output_1 == 0 else -1.0
-
                 branch_metric = (received_0 - expected_0) ** 2 + (received_1 - expected_1) ** 2
                 candidate_metric = current_metric + branch_metric
 
@@ -60,7 +56,6 @@ def decode_viterbi_75(received_values, information_length):
 
     decoded_bits.reverse()
     return np.array(decoded_bits[:information_length], dtype=np.int8)
-
 
 def maxlogmap_decode_terminated(systematic_llr, parity_llr, apriori_llr):
     systematic_llr = np.asarray(systematic_llr, dtype=float)
@@ -113,32 +108,21 @@ def maxlogmap_decode_terminated(systematic_llr, parity_llr, apriori_llr):
     for symbol_index in range(symbol_count):
         best_zero = negative_infinity
         best_one = negative_infinity
-
         for state in range(RSC_STATE_COUNT):
             next_state_zero = NEXT_STATE[state, 0]
             next_state_one = NEXT_STATE[state, 1]
-
             candidate_zero = alpha[symbol_index, state] + gamma_for_zero[symbol_index, state] + beta[symbol_index + 1, next_state_zero]
             candidate_one = alpha[symbol_index, state] + gamma_for_one[symbol_index, state] + beta[symbol_index + 1, next_state_one]
-
             if candidate_zero > best_zero:
                 best_zero = candidate_zero
             if candidate_one > best_one:
                 best_one = candidate_one
-
         posterior_llr[symbol_index] = best_zero - best_one
 
     extrinsic_llr = posterior_llr - systematic_llr - apriori_llr
     return posterior_llr, extrinsic_llr
 
-
-def decode_turbo(
-    received_systematic_stream_1,
-    received_parity_stream_1_full,
-    received_parity_stream_2_full,
-    noise_variance,
-    iteration_count,
-):
+def decode_turbo(received_systematic_stream_1, received_parity_stream_1_full, received_parity_stream_2_full, noise_variance, iteration_count):
     total_length = len(received_systematic_stream_1)
     channel_reliability = 2.0 / noise_variance
 
@@ -151,11 +135,7 @@ def decode_turbo(
     extrinsic_scale = 0.75
 
     for _ in range(iteration_count):
-        _, extrinsic_llr_1 = maxlogmap_decode_terminated(
-            systematic_llr_1,
-            parity_llr_1,
-            apriori_llr_decoder_1,
-        )
+        _, extrinsic_llr_1 = maxlogmap_decode_terminated(systematic_llr_1, parity_llr_1, apriori_llr_decoder_1)
 
         apriori_llr_decoder_2 = np.zeros(total_length, dtype=float)
         apriori_llr_decoder_2[:INFORMATION_BLOCK_LENGTH] = extrinsic_scale * extrinsic_llr_1[INTERLEAVER]
