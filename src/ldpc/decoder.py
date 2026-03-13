@@ -1,7 +1,3 @@
-"""
-LDPC decoder.
-"""
-
 import numpy as np
 from config import LLR_CLIP, MESSAGE_DAMPING
 from encoder import CHECK_TO_VARIABLE_NEIGHBORS, PARITY_CHECK_MATRIX, VARIABLE_TO_CHECK_NEIGHBORS
@@ -16,11 +12,18 @@ def compute_syndrome(hard_bits):
 
 
 def decode_codeword_with_sum_product(received_symbols, noise_variance, iteration_count):
+    """
+    Sum-product LDPC decoder with clipping, damping, and early stopping.
+
+    This is stronger than the earlier lightweight min-sum style version and is
+    a better fit for meaningful higher-rate LDPC runs.
+    """
     channel_llr = channel_llr_from_received_symbols(received_symbols, noise_variance)
     variable_count = len(channel_llr)
 
     v_to_c = {}
     c_to_v = {}
+
     for v in range(variable_count):
         for c in VARIABLE_TO_CHECK_NEIGHBORS[v]:
             v_to_c[(c, v)] = channel_llr[v]
@@ -31,6 +34,8 @@ def decode_codeword_with_sum_product(received_symbols, noise_variance, iteration
 
     for _ in range(iteration_count):
         new_c_to_v = {}
+
+        # Check-node update
         for c, var_indices in enumerate(CHECK_TO_VARIABLE_NEIGHBORS):
             incoming = np.array([v_to_c[(c, v)] for v in var_indices], dtype=float)
             tanh_vals = np.tanh(np.clip(incoming / 2.0, -10.0, 10.0))
@@ -50,6 +55,7 @@ def decode_codeword_with_sum_product(received_symbols, noise_variance, iteration
 
         c_to_v = new_c_to_v
 
+        # Variable-node update
         posterior = channel_llr.copy()
         for v in range(variable_count):
             for c in VARIABLE_TO_CHECK_NEIGHBORS[v]:
