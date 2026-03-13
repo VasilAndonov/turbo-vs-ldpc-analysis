@@ -3,49 +3,70 @@ LDPC decoder.
 """
 
 import numpy as np
+from config import LLR_CLIP, MESSAGE_DAMPING
+from encoder import CHECK_TO_VARIABLE_NEIGHBORS, PARITY_CHECK_MATRIX, VARIABLE_TO_CHECK_NEIGHBORS
 
-from config import NORMALIZATION_FACTOR
-from encoder import CHECK_TO_VARIABLE_NEIGHBORS
 
 def channel_llr_from_received_symbols(received_symbols, noise_variance):
-    return (2.0 / noise_variance) * np.asarray(received_symbols, dtype=float)
+    return np.clip((2.0 / noise_variance) * np.asarray(received_symbols, dtype=float), -LLR_CLIP, LLR_CLIP)
 
-def decode_codeword_with_layered_min_sum(received_symbols, noise_variance, iteration_count):
+
+def compute_syndrome(hard_bits):
+    return (PARITY_CHECK_MATRIX @ hard_bits) % 2
+
+
+def decode_codeword_with_sum_product(received_symbols, noise_variance, iteration_count):
     channel_llr = channel_llr_from_received_symbols(received_symbols, noise_variance)
-    posterior_llr = channel_llr.copy()
-    posterior_llr_history = []
+    variable_count = len(channel_llr)
 
-    check_to_variable_messages = [
-        np.zeros(len(variable_indices), dtype=float)
-        for variable_indices in CHECK_TO_VARIABLE_NEIGHBORS
-    ]
+    v_to_c = {}
+    c_to_v = {}
+    for v in range(variable_count):
+        for c in VARIABLE_TO_CHECK_NEIGHBORS[v]:
+            v_to_c[(c, v)] = channel_llr[v]
+            c_to_v[(c, v)] = 0.0
+
+    posterior_history = []
+    posterior = channel_llr.copy()
 
     for _ in range(iteration_count):
-        for check_index, variable_indices in enumerate(CHECK_TO_VARIABLE_NEIGHBORS):
-            old_messages = check_to_variable_messages[check_index]
-            extrinsic_values = posterior_llr[variable_indices] - old_messages
+        new_c_to_v = {}
+        for c, var_indices in enumerate(CHECK_TO_VARIABLE_NEIGHBORS):
+            incoming = np.array([v_to_c[(c, v)] for v in var_indices], dtype=float)
+            tanh_vals = np.tanh(np.clip(incoming / 2.0, -10.0, 10.0))
 
-            signs = np.sign(extrinsic_values)
-            signs[signs == 0.0] = 1.0
-            absolute_values = np.abs(extrinsic_values)
+            for i, v in enumerate(var_indices):
+                if len(var_indices) == 1:
+                    updated = 0.0
+                else:
+                    others = np.delete(tanh_vals, i)
+                    product = np.prod(others)
+                    product = np.clip(product, -0.999999, 0.999999)
+                    updated = 2.0 * np.arctanh(product)
 
-            smallest_index = int(np.argmin(absolute_values))
-            smallest_value = absolute_values[smallest_index]
-            masked_values = absolute_values.copy()
-            masked_values[smallest_index] = np.inf
-            second_smallest_value = np.min(masked_values)
+                prev = c_to_v[(c, v)]
+                damped = (1.0 - MESSAGE_DAMPING) * updated + MESSAGE_DAMPING * prev
+                new_c_to_v[(c, v)] = np.clip(damped, -LLR_CLIP, LLR_CLIP)
 
-            total_sign = np.prod(signs)
-            new_messages = np.zeros_like(old_messages)
+        c_to_v = new_c_to_v
 
-            for local_index in range(len(variable_indices)):
-                magnitude = second_smallest_value if local_index == smallest_index else smallest_value
-                new_messages[local_index] = NORMALIZATION_FACTOR * total_sign * signs[local_index] * magnitude
+        posterior = channel_llr.copy()
+        for v in range(variable_count):
+            for c in VARIABLE_TO_CHECK_NEIGHBORS[v]:
+                posterior[v] += c_to_v[(c, v)]
+        posterior = np.clip(posterior, -LLR_CLIP, LLR_CLIP)
+        posterior_history.append(posterior.copy())
 
-            check_to_variable_messages[check_index] = new_messages
-            posterior_llr[variable_indices] = extrinsic_values + new_messages
+        for v in range(variable_count):
+            for c in VARIABLE_TO_CHECK_NEIGHBORS[v]:
+                ext = posterior[v] - c_to_v[(c, v)]
+                v_to_c[(c, v)] = np.clip(ext, -LLR_CLIP, LLR_CLIP)
 
-        posterior_llr_history.append(posterior_llr.copy())
+        hard = (posterior < 0.0).astype(np.int8)
+        if np.all(compute_syndrome(hard) == 0):
+            while len(posterior_history) < iteration_count:
+                posterior_history.append(posterior.copy())
+            return hard, posterior_history
 
-    hard_decision_bits = (posterior_llr < 0.0).astype(np.int8)
-    return hard_decision_bits, posterior_llr_history
+    hard = (posterior < 0.0).astype(np.int8)
+    return hard, posterior_history
