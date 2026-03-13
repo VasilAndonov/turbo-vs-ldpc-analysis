@@ -5,7 +5,7 @@ Multi-rate LDPC configuration.
 import numpy as np
 
 RANDOM_SEED = 12
-INFORMATION_BIT_COUNT = 4000
+INFORMATION_BIT_COUNT = 1024
 
 SUPPORTED_CODE_RATES = {
     "1/2": 1.0 / 2.0,
