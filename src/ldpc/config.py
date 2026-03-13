@@ -1,7 +1,3 @@
-"""
-Multi-rate LDPC configuration.
-"""
-
 import numpy as np
 
 RANDOM_SEED = 12
@@ -21,28 +17,31 @@ PARITY_BIT_COUNT = CODEWORD_BIT_COUNT - INFORMATION_BIT_COUNT
 INFORMATION_COLUMN_WEIGHT_BY_RATE = {
     "1/2": 6,
     "1/3": 7,
+    "3/4": 5,
+    "7/8": 4,
+}
+
+PARITY_BAND_WIDTH_BY_RATE = {
+    "1/2": 5,
+    "1/3": 6,
     "3/4": 4,
     "7/8": 3,
 }
-PARITY_BAND_WIDTH_BY_RATE = {
-    "1/2": 4,
-    "1/3": 5,
-    "3/4": 3,
-    "7/8": 2,
-}
-ROW_WEIGHT_PENALTY = 0.45
 
-DECODER_ITERATION_LIST = [1, 2, 3, 4, 5, 6]
-LLR_CLIP = 18.0
-MESSAGE_DAMPING = 0.25
+ROW_WEIGHT_PENALTY = 0.55
+
+# Give LDPC a larger practical iteration budget.
+DECODER_ITERATION_LIST = [1, 2, 4, 6, 8, 10]
+
+LLR_CLIP = 20.0
+MESSAGE_DAMPING = 0.20
 
 DEBUG_MODE = False
-
 LDPC_EB_NO_DB = np.arange(-1.0, 1.76, 0.25, dtype=float)
 
-MINIMUM_FRAME_COUNT = 140 if DEBUG_MODE else 260
-MAXIMUM_FRAME_COUNT = 900 if DEBUG_MODE else 1800
-TARGET_ERROR_COUNT = 260 if DEBUG_MODE else 800
+MINIMUM_FRAME_COUNT = 160 if DEBUG_MODE else 320
+MAXIMUM_FRAME_COUNT = 1000 if DEBUG_MODE else 2200
+TARGET_ERROR_COUNT = 320 if DEBUG_MODE else 1000
 
 BENCHMARK_BLOCK_COUNT = 16 if DEBUG_MODE else 24
 BENCHMARK_EB_NO_DB = 0.5
