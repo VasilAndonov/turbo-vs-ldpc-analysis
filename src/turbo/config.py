@@ -15,7 +15,7 @@ SUPPORTED_CODE_RATES = {
 }
 
 SELECTED_CODE_RATE = SUPPORTED_CODE_RATES["1/2"]
-DECODER_ITERATION_LIST = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+DECODER_ITERATION_LIST = [1, 2, 3, 4, 5, 6, 7]
 
 CONVOLUTIONAL_EB_NO_DB = np.arange(-4.0, 5.0, 1.0, dtype=float)
 TURBO_EB_NO_DB = np.arange(-1.0, 1.76, 0.25, dtype=float)
