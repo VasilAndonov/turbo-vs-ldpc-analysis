@@ -1,16 +1,9 @@
 import time
 import matplotlib.pyplot as plt
 import numpy as np
-
-from config import (
-    DECODER_ITERATION_LIST,
-    LDPC_EB_NO_DB,
-    RANDOM_SEED,
-    SAVE_FIGURES,
-    SAVE_PREFIX,
-    get_rate_label,
-)
+from config import DECODER_ITERATION_LIST, LDPC_EB_NO_DB, RANDOM_SEED, SAVE_FIGURES, SAVE_PREFIX, get_rate_label
 from simulation import run_ldpc_simulation
+
 
 def plot_results(ber_by_iteration, llr_snapshot):
     floor_value = 1e-8
@@ -47,12 +40,14 @@ def plot_results(ber_by_iteration, llr_snapshot):
         plt.savefig(f"{SAVE_PREFIX}_llr_{get_rate_label().replace('/', '_')}.png", dpi=170)
     plt.show()
 
+
 def main():
-    random_generator = np.random.default_rng(RANDOM_SEED)
-    start_time = time.time()
-    ber_by_iteration, llr_snapshot = run_ldpc_simulation(random_generator)
+    rng = np.random.default_rng(RANDOM_SEED)
+    start = time.time()
+    ber_by_iteration, llr_snapshot = run_ldpc_simulation(rng)
     plot_results(ber_by_iteration, llr_snapshot)
-    print(f"LDPC simulation finished in {time.time() - start_time:.2f} seconds")
+    print(f"LDPC simulation finished in {time.time() - start:.2f} seconds")
+
 
 if __name__ == "__main__":
     main()
