@@ -1,13 +1,4 @@
 from __future__ import annotations
-
-"""
-Turbo versus LDPC comparison for the multi-rate repositories.
-
-This version compares the best configured iteration on both codes and uses
-fixed decoder workloads for throughput, which makes the timing comparison much
-more meaningful than timing full adaptive Monte Carlo runs.
-"""
-
 import importlib
 import re
 import sys
@@ -23,7 +14,7 @@ OUTPUT_FOLDER = Path("comparison_results")
 OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
 CODE_RATE_LABELS = ["1/2", "1/3", "3/4", "7/8"]
-THROUGHPUT_REFERENCE_RATE = "1/2"
+THROUGHPUT_REFERENCE_RATE = "1/3"
 
 SAVE_FIGURES = True
 SHOW_FIGURES = True
@@ -31,9 +22,11 @@ FIGURE_PREFIX = "turbo_vs_ldpc_rates"
 
 PROJECT_MODULE_NAMES = ["config", "encoder", "decoder", "simulation", "main"]
 
+
 def clear_project_modules():
-    for module_name in PROJECT_MODULE_NAMES:
-        sys.modules.pop(module_name, None)
+    for name in PROJECT_MODULE_NAMES:
+        sys.modules.pop(name, None)
+
 
 class TemporaryProjectPath:
     def __init__(self, folder: Path):
@@ -53,12 +46,14 @@ class TemporaryProjectPath:
                 pass
         clear_project_modules()
 
+
 def patch_config_text(config_text: str, rate_label: str) -> str:
     return re.sub(
         r'SELECTED_CODE_RATE\s*=\s*SUPPORTED_CODE_RATES\["[^"]+"\]',
         f'SELECTED_CODE_RATE = SUPPORTED_CODE_RATES["{rate_label}"]',
         config_text,
     )
+
 
 class TemporaryConfigPatch:
     def __init__(self, project_folder: Path, rate_label: str):
@@ -77,9 +72,11 @@ class TemporaryConfigPatch:
             self.config_path.write_text(self.original_text)
         clear_project_modules()
 
+
 def uncoded_bpsk_ber(ebn0_db_values):
     ebn0_db_values = np.asarray(ebn0_db_values, dtype=float)
     return 0.5 * erfc(np.sqrt(10.0 ** (ebn0_db_values / 10.0)))
+
 
 def finish_figure(file_name: str):
     output_path = OUTPUT_FOLDER / file_name
@@ -92,14 +89,15 @@ def finish_figure(file_name: str):
     else:
         plt.close()
 
+
 def run_turbo_project_for_rate(rate_label: str):
     with TemporaryConfigPatch(TURBO_FOLDER, rate_label):
         with TemporaryProjectPath(TURBO_FOLDER):
             turbo_config = importlib.import_module("config")
             turbo_simulation = importlib.import_module("simulation")
-            random_generator = np.random.default_rng(getattr(turbo_config, "RANDOM_SEED", 12))
-            convolutional_ber = turbo_simulation.run_convolutional_simulation(random_generator)
-            turbo_results, _ = turbo_simulation.run_turbo_simulation(random_generator)
+            rng = np.random.default_rng(getattr(turbo_config, "RANDOM_SEED", 12))
+            convolutional_ber = turbo_simulation.run_convolutional_simulation(rng)
+            turbo_results, _ = turbo_simulation.run_turbo_simulation(rng)
             return {
                 "convolutional_ebn0_db": np.array(turbo_config.CONVOLUTIONAL_EB_NO_DB, dtype=float),
                 "convolutional_ber": np.array(convolutional_ber, dtype=float),
@@ -107,6 +105,7 @@ def run_turbo_project_for_rate(rate_label: str):
                 "iteration_list": list(turbo_config.DECODER_ITERATION_LIST),
                 "ber_by_iteration": {int(k): np.array(v, dtype=float) for k, v in turbo_results.items()},
             }
+
 
 def run_ldpc_project_for_rate(rate_label: str):
     with TemporaryConfigPatch(LDPC_FOLDER, rate_label):
@@ -120,21 +119,24 @@ def run_ldpc_project_for_rate(rate_label: str):
                 "ber_by_iteration": {int(k): np.array(v, dtype=float) for k, v in ldpc_results.items()},
             }
 
+
 def benchmark_turbo_decoder(rate_label: str):
     with TemporaryConfigPatch(TURBO_FOLDER, rate_label):
         with TemporaryProjectPath(TURBO_FOLDER):
             turbo_config = importlib.import_module("config")
             turbo_simulation = importlib.import_module("simulation")
-            random_generator = np.random.default_rng(getattr(turbo_config, "RANDOM_SEED", 12))
-            return turbo_simulation.benchmark_turbo_decoder(random_generator)
+            rng = np.random.default_rng(getattr(turbo_config, "RANDOM_SEED", 12))
+            return turbo_simulation.benchmark_turbo_decoder(rng)
+
 
 def benchmark_ldpc_decoder(rate_label: str):
     with TemporaryConfigPatch(LDPC_FOLDER, rate_label):
         with TemporaryProjectPath(LDPC_FOLDER):
             ldpc_config = importlib.import_module("config")
             ldpc_simulation = importlib.import_module("simulation")
-            random_generator = np.random.default_rng(getattr(ldpc_config, "RANDOM_SEED", 12))
-            return ldpc_simulation.benchmark_ldpc_decoder(random_generator)
+            rng = np.random.default_rng(getattr(ldpc_config, "RANDOM_SEED", 12))
+            return ldpc_simulation.benchmark_ldpc_decoder(rng)
+
 
 def plot_ber_vs_snr_by_rate(turbo_results_by_rate, ldpc_results_by_rate):
     floor_value = 1e-8
@@ -148,14 +150,27 @@ def plot_ber_vs_snr_by_rate(turbo_results_by_rate, ldpc_results_by_rate):
         ldpc_data = ldpc_results_by_rate.get(rate_label)
 
         if turbo_data is None or ldpc_data is None:
-            axis.text(0.5, 0.5, "Rate could not be simulated\nfor one or both projects", ha="center", va="center", transform=axis.transAxes)
+            axis.text(
+                0.5,
+                0.5,
+                "Rate could not be simulated\nfor one or both projects",
+                ha="center",
+                va="center",
+                transform=axis.transAxes,
+            )
             axis.grid(True, which="both", alpha=0.35)
             axis.set_xlabel("Eb/N0 (dB)")
             axis.set_ylabel("Bit error rate")
             continue
 
         reference_ebn0 = turbo_data["ebn0_db"]
-        axis.semilogy(reference_ebn0, np.clip(uncoded_bpsk_ber(reference_ebn0), floor_value, None), "r.-", linewidth=1.1, label="Uncoded BPSK")
+        axis.semilogy(
+            reference_ebn0,
+            np.clip(uncoded_bpsk_ber(reference_ebn0), floor_value, None),
+            "r.-",
+            linewidth=1.1,
+            label="Uncoded BPSK",
+        )
 
         best_turbo_iteration = max(turbo_data["iteration_list"])
         axis.semilogy(
@@ -184,6 +199,7 @@ def plot_ber_vs_snr_by_rate(turbo_results_by_rate, ldpc_results_by_rate):
     figure.suptitle("BER versus SNR for Turbo and LDPC at several code rates")
     finish_figure(f"{FIGURE_PREFIX}_ber_by_rate.png")
 
+
 def plot_throughput_and_runtime(turbo_runtime_by_iteration, ldpc_runtime_by_iteration):
     iteration_counts = np.array(sorted(turbo_runtime_by_iteration.keys()), dtype=int)
     turbo_runtime = np.array([turbo_runtime_by_iteration[count] for count in iteration_counts], dtype=float)
@@ -210,7 +226,9 @@ def plot_throughput_and_runtime(turbo_runtime_by_iteration, ldpc_runtime_by_iter
     plt.title(f"Relative decoder throughput at rate {THROUGHPUT_REFERENCE_RATE}")
     plt.grid(True, alpha=0.35)
     plt.legend()
+
     finish_figure(f"{FIGURE_PREFIX}_throughput.png")
+
 
 def main():
     turbo_results_by_rate = {}
@@ -223,6 +241,7 @@ def main():
             turbo_results_by_rate[rate_label] = run_turbo_project_for_rate(rate_label)
         except Exception as exc:
             print(f"Turbo run failed for rate {rate_label}: {exc}")
+
         try:
             ldpc_results_by_rate[rate_label] = run_ldpc_project_for_rate(rate_label)
         except Exception as exc:
@@ -234,6 +253,7 @@ def main():
 
     plot_ber_vs_snr_by_rate(turbo_results_by_rate, ldpc_results_by_rate)
     plot_throughput_and_runtime(turbo_runtime_by_iteration, ldpc_runtime_by_iteration)
+
 
 if __name__ == "__main__":
     main()
