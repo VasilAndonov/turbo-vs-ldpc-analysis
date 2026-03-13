@@ -2,7 +2,6 @@ import time
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.special import erfc
-
 from config import (
     CONVOLUTIONAL_EB_NO_DB,
     DECODER_ITERATION_LIST,
@@ -13,6 +12,7 @@ from config import (
     get_rate_label,
 )
 from simulation import run_convolutional_simulation, run_turbo_simulation
+
 
 def plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot):
     floor_value = 1e-8
@@ -63,13 +63,15 @@ def plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot):
         plt.savefig(f"{SAVE_PREFIX}_llr_{get_rate_label().replace('/', '_')}.png", dpi=170)
     plt.show()
 
+
 def main():
-    random_generator = np.random.default_rng(RANDOM_SEED)
-    start_time = time.time()
-    convolutional_ber = run_convolutional_simulation(random_generator)
-    turbo_ber_by_iteration, llr_snapshot = run_turbo_simulation(random_generator)
+    rng = np.random.default_rng(RANDOM_SEED)
+    start = time.time()
+    convolutional_ber = run_convolutional_simulation(rng)
+    turbo_ber_by_iteration, llr_snapshot = run_turbo_simulation(rng)
     plot_results(convolutional_ber, turbo_ber_by_iteration, llr_snapshot)
-    print(f"Turbo simulation finished in {time.time() - start_time:.2f} seconds")
+    print(f"Turbo simulation finished in {time.time() - start:.2f} seconds")
+
 
 if __name__ == "__main__":
     main()
