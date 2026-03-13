@@ -172,6 +172,7 @@ def plot_ber_vs_snr_by_rate(turbo_results_by_rate, ldpc_results_by_rate):
             label="Uncoded BPSK",
         )
 
+        # Main comparison: turbo best available vs LDPC best available
         best_turbo_iteration = max(turbo_data["iteration_list"])
         axis.semilogy(
             turbo_data["ebn0_db"],
