@@ -23,7 +23,7 @@ OUTPUT_FOLDER = Path("comparison_results")
 OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
 
 CODE_RATE_LABELS = ["1/2", "1/3", "3/4", "7/8"]
-THROUGHPUT_REFERENCE_RATE = "1/3"
+THROUGHPUT_REFERENCE_RATE = "1/2"
 
 SAVE_FIGURES = True
 SHOW_FIGURES = True
