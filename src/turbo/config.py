@@ -1,7 +1,3 @@
-"""
-Multi-rate turbo-code configuration.
-"""
-
 import numpy as np
 
 RANDOM_SEED = 12
@@ -21,13 +17,13 @@ TURBO_EB_NO_DB = np.arange(-1.0, 1.76, 0.25, dtype=float)
 
 DEBUG_MODE = False
 
-CONVOLUTIONAL_MINIMUM_FRAME_COUNT = 120 if DEBUG_MODE else 200
-CONVOLUTIONAL_MAXIMUM_FRAME_COUNT = 600 if DEBUG_MODE else 1200
-CONVOLUTIONAL_TARGET_ERROR_COUNT = 600 if DEBUG_MODE else 1500
+CONVOLUTIONAL_MINIMUM_FRAME_COUNT = 120 if DEBUG_MODE else 220
+CONVOLUTIONAL_MAXIMUM_FRAME_COUNT = 700 if DEBUG_MODE else 1400
+CONVOLUTIONAL_TARGET_ERROR_COUNT = 700 if DEBUG_MODE else 1800
 
-TURBO_MINIMUM_FRAME_COUNT = 120 if DEBUG_MODE else 240
-TURBO_MAXIMUM_FRAME_COUNT = 700 if DEBUG_MODE else 1600
-TURBO_TARGET_ERROR_COUNT = 220 if DEBUG_MODE else 700
+TURBO_MINIMUM_FRAME_COUNT = 140 if DEBUG_MODE else 280
+TURBO_MAXIMUM_FRAME_COUNT = 900 if DEBUG_MODE else 1800
+TURBO_TARGET_ERROR_COUNT = 260 if DEBUG_MODE else 900
 
 BENCHMARK_BLOCK_COUNT = 16 if DEBUG_MODE else 24
 BENCHMARK_EB_NO_DB = 0.5
@@ -55,6 +51,11 @@ def get_rate_label():
 
 
 def get_information_puncture_definition():
+    """
+    More balanced puncturing for higher rates.
+
+    Tail parity bits are still preserved elsewhere in the encoder logic.
+    """
     rate = SELECTED_CODE_RATE
 
     if abs(rate - 1.0 / 3.0) < 1e-12:
@@ -71,14 +72,14 @@ def get_information_puncture_definition():
 
     if abs(rate - 3.0 / 4.0) < 1e-12:
         return {
-            "parity_1_pattern": np.array([1, 0, 0, 0], dtype=np.int8),
-            "parity_2_pattern": np.array([0, 1, 0, 0], dtype=np.int8),
+            "parity_1_pattern": np.array([1, 0, 0, 1], dtype=np.int8),
+            "parity_2_pattern": np.array([0, 1, 1, 0], dtype=np.int8),
         }
 
     if abs(rate - 7.0 / 8.0) < 1e-12:
         return {
-            "parity_1_pattern": np.array([1, 0, 0, 0, 0, 0, 0, 0], dtype=np.int8),
-            "parity_2_pattern": np.array([0, 1, 0, 0, 0, 0, 0, 0], dtype=np.int8),
+            "parity_1_pattern": np.array([1, 0, 0, 0, 0, 1, 0, 0], dtype=np.int8),
+            "parity_2_pattern": np.array([0, 1, 0, 0, 1, 0, 0, 0], dtype=np.int8),
         }
 
     raise ValueError(f"Unsupported turbo code rate: {rate}")
