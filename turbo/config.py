@@ -38,7 +38,7 @@ SUPPORTED_CODE_RATES = {
     "3/4": 3.0 / 4.0,
     "7/8": 7.0 / 8.0,
 }
-SELECTED_CODE_RATE_LABEL = "1/3"
+SELECTED_CODE_RATE_LABEL = "1/2"
 
 def sigma2_from_ebn0(ebn0_db: float, code_rate: float) -> float:
     ebn0 = 10.0 ** (ebn0_db / 10.0)
