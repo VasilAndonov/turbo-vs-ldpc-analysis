@@ -1,13 +1,13 @@
 import numpy as np
 
-FAST_MODE = True
+FAST_MODE = False
 SHOW_PLOTS = True
 SAVE_PLOTS = False
 PLOT_PREFIX = "turbo"
 
 RANDOM_SEED = 12
 
-INFORMATION_BITS = 256 if FAST_MODE else 1024
+INFORMATION_BITS = 256 if FAST_MODE else 4000
 ITERATIONS = [1, 2, 3, 4, 5, 6]
 
 # Convolutional baseline sweep
