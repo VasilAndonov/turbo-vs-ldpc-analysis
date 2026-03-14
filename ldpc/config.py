@@ -10,7 +10,7 @@ RANDOM_SEED = 12
 # Chosen so the lifting size Z is integer for every QC-LDPC rate below.
 INFORMATION_BITS = 400 if FAST_MODE else 672
 
-ITERATIONS = [1, 2, 3, 4, 5, 6]
+ITERATIONS = [1, 2, 3, 4, 5, 6, 7]
 LDPC_EBN0_DB = np.array([-1.0, 0.0, 0.8, 1.0, 1.15, 1.25, 1.30], dtype=float) if FAST_MODE else np.arange(-1.0, 1.31, 0.15)
 
 MIN_FRAMES = 30 if FAST_MODE else 180
