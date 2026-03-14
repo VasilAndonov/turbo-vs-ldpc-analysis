@@ -1,77 +1,91 @@
 import numpy as np
-from ldpc.config import INFORMATION_BITS, SUPPORTED_CODE_RATES, RANDOM_SEED
+from ldpc.config import INFORMATION_BITS
 
-def build_ldpc_parameters(rate_label):
+def circulant_permutation_block(z_size, shift):
+    block = np.zeros((z_size, z_size), dtype=np.int8)
+    for row in range(z_size):
+        block[row, (row + shift) % z_size] = 1
+    return block
+
+def get_qc_prototypes(rate_label):
+    # H = [A | B], where B is lower-bidiagonal in circulant identity blocks.
     if rate_label == "1/3":
-        return dict(column_weight=3)
-    if rate_label == "1/2":
-        return dict(column_weight=3)
-    if rate_label == "3/4":
-        return dict(column_weight=4)
-    if rate_label == "7/8":
-        return dict(column_weight=5)
-    raise ValueError(rate_label)
+        a_proto = np.array([
+            [0, 7],
+            [13, 2],
+            [5, 11],
+            [9, 4],
+        ], dtype=int)
+    elif rate_label == "1/2":
+        a_proto = np.array([
+            [0, 9, 3, 12],
+            [10, 2, 14, 6],
+            [4, 13, 1, 11],
+            [15, 7, 5, 8],
+        ], dtype=int)
+    elif rate_label == "3/4":
+        a_proto = np.array([
+            [0, 5, 9, 13, 17, 21, 25, 29, 1, 7, 11, 15],
+            [3, 8, 12, 16, 20, 24, 28, 2, 6, 10, 14, 18],
+            [19, 23, 27, 31, 4, 9, 13, 17, 21, 25, 29, 5],
+            [6, 11, 15, 19, 23, 27, 30, 8, 12, 16, 20, 24],
+        ], dtype=int)
+    elif rate_label == "7/8":
+        a_proto = np.array([
+            [0, 1, 3, 5, 7, 9, 11, 2, 4, 6, 8, 10, 12, 1, 3, 5, 7, 9, 11, 13, 2, 4, 6, 8, 10, 12, 14, 15],
+            [2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15, 0, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9],
+            [5, 7, 9, 11, 13, 15, 0, 4, 6, 8, 10, 12, 14, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15],
+            [8, 10, 12, 14, 1, 3, 5, 7, 9, 11, 13, 15, 0, 6, 8, 10, 12, 14, 2, 4, 6, 8, 10, 12, 14, 1, 3, 5],
+        ], dtype=int)
+    else:
+        raise ValueError(rate_label)
 
-def build_ra_ldpc_matrices(rate_label):
-    params = build_ldpc_parameters(rate_label)
-    column_weight = params["column_weight"]
+    m_blocks = 4
+    k_blocks = a_proto.shape[1]
+    b_proto = -np.ones((m_blocks, m_blocks), dtype=int)
+    for row in range(m_blocks):
+        b_proto[row, row] = 0
+        if row > 0:
+            b_proto[row, row - 1] = 0
+    return a_proto, b_proto
 
-    code_rate = SUPPORTED_CODE_RATES[rate_label]
-    parity_bits = int(round(INFORMATION_BITS * (1.0 / code_rate - 1.0)))
+def build_qc_ldpc_matrices(rate_label):
+    a_proto, b_proto = get_qc_prototypes(rate_label)
+    m_blocks = a_proto.shape[0]
+    k_blocks = a_proto.shape[1]
+
+    if INFORMATION_BITS % k_blocks != 0:
+        raise ValueError(f"INFORMATION_BITS={INFORMATION_BITS} is not divisible by k_blocks={k_blocks} for rate {rate_label}")
+
+    z_size = INFORMATION_BITS // k_blocks
+    parity_bits = m_blocks * z_size
     codeword_bits = INFORMATION_BITS + parity_bits
 
-    rng = np.random.default_rng(RANDOM_SEED + abs(hash(rate_label)) % 1000)
+    h_rows = []
+    for block_row in range(m_blocks):
+        row_blocks = []
+        for block_col in range(k_blocks):
+            row_blocks.append(circulant_permutation_block(z_size, int(a_proto[block_row, block_col])))
+        for block_col in range(m_blocks):
+            shift = int(b_proto[block_row, block_col])
+            if shift < 0:
+                row_blocks.append(np.zeros((z_size, z_size), dtype=np.int8))
+            else:
+                row_blocks.append(circulant_permutation_block(z_size, shift))
+        h_rows.append(np.concatenate(row_blocks, axis=1))
 
-    A = np.zeros((parity_bits, INFORMATION_BITS), dtype=np.int8)
-    row_load = np.zeros(parity_bits, dtype=int)
+    h_matrix = np.concatenate(h_rows, axis=0)
+    return h_matrix, a_proto, b_proto, z_size, codeword_bits, parity_bits
 
-    for col in range(INFORMATION_BITS):
-        chosen_rows = []
-        preferred = [(col * column_weight + offset * (parity_bits // max(column_weight, 1) + 1)) % parity_bits for offset in range(column_weight)]
-        for candidate in preferred:
-            window = [(candidate + shift) % parity_bits for shift in (-2, -1, 0, 1, 2)]
-            best_row = None
-            best_score = None
-            for row in window:
-                if row in chosen_rows:
-                    continue
-                score = row_load[row]
-                if best_score is None or score < best_score:
-                    best_score = score
-                    best_row = row
-            chosen_rows.append(best_row)
-
-        chosen_rows = sorted(set(chosen_rows))
-        while len(chosen_rows) < column_weight:
-            remaining = np.argsort(row_load)
-            for row in remaining:
-                if row not in chosen_rows:
-                    chosen_rows.append(int(row))
-                    break
-
-        for row in chosen_rows[:column_weight]:
-            A[row, col] = 1
-            row_load[row] += 1
-
-    # Accumulator matrix B: lower bidiagonal
-    B = np.zeros((parity_bits, parity_bits), dtype=np.int8)
-    for row in range(parity_bits):
-        B[row, row] = 1
-        if row > 0:
-            B[row, row - 1] = 1
-
-    H = np.concatenate([A, B], axis=1)
-    return H, A, B, codeword_bits, parity_bits
-
-def build_edge_structure(H):
-    check_count, variable_count = H.shape
+def build_edge_structure(h_matrix):
+    check_count, variable_count = h_matrix.shape
     edge_variable = []
     check_edge_start = np.zeros(check_count + 1, dtype=np.int64)
     variable_neighbors = [[] for _ in range(variable_count)]
 
     edge_index = 0
     for check_index in range(check_count):
-        variable_indices = np.where(H[check_index] == 1)[0]
+        variable_indices = np.where(h_matrix[check_index] == 1)[0]
         check_edge_start[check_index] = edge_index
         for variable_index in variable_indices:
             edge_variable.append(variable_index)
@@ -91,23 +105,25 @@ def build_edge_structure(H):
 
     return np.asarray(edge_variable, dtype=np.int64), check_edge_start, variable_edges, variable_edge_start
 
-def encode_ra_ldpc(information_bits, A, B):
+def cyclic_shift(block, shift):
+    return np.roll(block, shift, axis=0)
+
+def encode_qc_ldpc(information_bits, a_proto, b_proto, z_size):
     information_bits = np.asarray(information_bits, dtype=np.int8)
-    syndrome = np.zeros(A.shape[0], dtype=np.int8)
+    m_blocks = a_proto.shape[0]
+    k_blocks = a_proto.shape[1]
+    info_blocks = information_bits.reshape(k_blocks, z_size)
 
-    # syndrome = A * u over GF(2)
-    for row in range(A.shape[0]):
-        value = 0
-        nz = np.where(A[row] == 1)[0]
-        for col in nz:
-            value ^= int(information_bits[col])
-        syndrome[row] = value
+    syndrome_blocks = np.zeros((m_blocks, z_size), dtype=np.int8)
+    for row in range(m_blocks):
+        accum = np.zeros(z_size, dtype=np.int8)
+        for col in range(k_blocks):
+            accum ^= cyclic_shift(info_blocks[col], int(a_proto[row, col]))
+        syndrome_blocks[row] = accum
 
-    # B is lower bidiagonal => p[0]=s[0], p[i]=s[i] xor p[i-1]
-    parity = np.zeros(B.shape[0], dtype=np.int8)
-    if len(parity) > 0:
-        parity[0] = syndrome[0]
-        for index in range(1, len(parity)):
-            parity[index] = syndrome[index] ^ parity[index - 1]
+    parity_blocks = np.zeros((m_blocks, z_size), dtype=np.int8)
+    parity_blocks[0] = syndrome_blocks[0].copy()
+    for row in range(1, m_blocks):
+        parity_blocks[row] = syndrome_blocks[row] ^ parity_blocks[row - 1]
 
-    return np.concatenate([information_bits, parity]).astype(np.int8)
+    return np.concatenate([information_bits, parity_blocks.reshape(-1)]).astype(np.int8)
