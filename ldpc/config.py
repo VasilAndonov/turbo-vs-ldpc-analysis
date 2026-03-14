@@ -6,7 +6,7 @@ SAVE_PLOTS = False
 PLOT_PREFIX = "ldpc"
 
 RANDOM_SEED = 12
-INFORMATION_BITS = 384 if FAST_MODE else 1152
+INFORMATION_BITS = 1024 if FAST_MODE else 2048
 
 ITERATIONS = [1, 2, 3, 4, 5, 6]
 LDPC_EBN0_DB = np.array([-1.0, 0.0, 0.8, 1.0, 1.15, 1.25, 1.30], dtype=float) if FAST_MODE else np.arange(-1.0, 1.31, 0.15)
