@@ -17,7 +17,7 @@ TARGET_ERRORS = 120 if FAST_MODE else 500
 BENCHMARK_BLOCKS = 8 if FAST_MODE else 20
 
 SUPPORTED_CODE_RATES = {"1/3": 1/3, "1/2": 1/2, "3/4": 3/4, "7/8": 7/8}
-SELECTED_CODE_RATE_LABEL = "1/3"
+SELECTED_CODE_RATE_LABEL = "3/4"
 
 def sigma2_from_ebn0(ebn0_db, code_rate):
     ebn0 = 10.0 ** (ebn0_db / 10.0)
