@@ -7,8 +7,8 @@ PLOT_PREFIX = "turbo"
 
 RANDOM_SEED = 12
 
-INFORMATION_BITS = 256 if FAST_MODE else 4000
-ITERATIONS = [1, 2, 3, 4, 5, 6]
+INFORMATION_BITS = 256 if FAST_MODE else 1024
+ITERATIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 # Convolutional baseline sweep
 CONV_EBN0_DB = np.array([-8.5, -6.8, -4.8, -2.8, -0.8, 1.5, 3.5], dtype=float)
