@@ -7,7 +7,7 @@ PLOT_PREFIX = "turbo"
 
 RANDOM_SEED = 12
 
-INFORMATION_BITS = 672 if FAST_MODE else 1024
+INFORMATION_BITS = 1024 if FAST_MODE else 2048
 ITERATIONS = [1, 2, 3, 4, 5, 6, 7]
 
 # Convolutional baseline sweep
