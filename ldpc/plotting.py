@@ -6,13 +6,14 @@ from ldpc.config import LDPC_EBN0_DB, ITERATIONS, SHOW_PLOTS, SAVE_PLOTS, PLOT_P
 def plot_ldpc_results(ldpc_results, llr_snapshot):
     floor = 1e-8
     uncoded = 0.5 * erfc(np.sqrt(10.0 ** (LDPC_EBN0_DB / 10.0)))
+
     plt.figure(figsize=(7, 4.8))
     plt.semilogy(LDPC_EBN0_DB, np.clip(uncoded, floor, None), "r.-", label="Uncoded BPSK")
     for it in ITERATIONS:
         plt.semilogy(LDPC_EBN0_DB, np.clip(ldpc_results[it], floor, None), marker="x", label=f"Iteration {it}")
     plt.xlabel("EbNo(dB)")
     plt.ylabel("BER")
-    plt.title("BPSK modulation, LDPC Code, sum-product decoding")
+    plt.title("BPSK modulation, LDPC Code, normalized min-sum decoding")
     plt.grid(True, which="both", alpha=0.35)
     plt.legend()
     plt.tight_layout()
