@@ -1,6 +1,6 @@
 import numpy as np
 
-FAST_MODE = True
+FAST_MODE = False
 SHOW_PLOTS = True
 SAVE_PLOTS = False
 PLOT_PREFIX = "turbo"
